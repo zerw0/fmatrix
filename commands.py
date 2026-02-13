@@ -904,31 +904,74 @@ playcounts (default), artistcount, trackcount
             # Paste the album cover
             collage.paste(img, (x, y))
 
-            # Add text overlay with album name (if enabled)
-            if album_name and show_titles:
+            # Add text overlay with artist + album (if enabled)
+            if show_titles and (album_name or artist_name):
                 draw = ImageDraw.Draw(collage)
 
-                # Truncate long album names
-                display_name = album_name if len(album_name) <= 25 else album_name[:22] + '...'
+                def truncate_to_width(text: str, max_width: int) -> str:
+                    if not text:
+                        return ''
+                    text_bbox = draw.textbbox((0, 0), text, font=font)
+                    text_width = text_bbox[2] - text_bbox[0]
+                    if text_width <= max_width:
+                        return text
 
-                # Draw semi-transparent background for text
-                text_bbox = draw.textbbox((0, 0), display_name, font=font)
-                text_width = text_bbox[2] - text_bbox[0]
-                text_height = text_bbox[3] - text_bbox[1]
+                    ellipsis = '...'
+                    trimmed = text
+                    while trimmed:
+                        trimmed = trimmed[:-1]
+                        text_bbox = draw.textbbox((0, 0), trimmed + ellipsis, font=font)
+                        if (text_bbox[2] - text_bbox[0]) <= max_width:
+                            return trimmed + ellipsis
+                    return ellipsis
 
-                # Position text at bottom of tile
-                text_x = x + (tile_size - text_width) // 2
-                text_y = y + tile_size - text_height - 10
-
-                # Draw background rectangle
                 padding = 5
-                draw.rectangle(
-                    [text_x - padding, text_y - padding, text_x + text_width + padding, text_y + text_height + padding],
-                    fill=(0, 0, 0, 180)
-                )
+                line_spacing = 2
+                max_text_width = tile_size - (padding * 2)
 
-                # Draw text
-                draw.text((text_x, text_y), display_name, fill='#FFFFFF', font=font)
+                lines = []
+                if artist_name:
+                    lines.append(truncate_to_width(artist_name, max_text_width))
+                if album_name:
+                    lines.append(truncate_to_width(album_name, max_text_width))
+
+                # Filter out empty lines after truncation
+                lines = [line for line in lines if line]
+                if lines:
+                    line_metrics = []
+                    max_line_width = 0
+                    total_height = 0
+                    for line in lines:
+                        text_bbox = draw.textbbox((0, 0), line, font=font)
+                        line_width = text_bbox[2] - text_bbox[0]
+                        line_height = text_bbox[3] - text_bbox[1]
+                        line_metrics.append((line, line_width, line_height))
+                        max_line_width = max(max_line_width, line_width)
+                        total_height += line_height
+
+                    total_height += line_spacing * (len(lines) - 1)
+
+                    # Position text block at bottom of tile
+                    block_x = x + (tile_size - max_line_width) // 2
+                    block_y = y + tile_size - total_height - 10
+
+                    # Draw background rectangle
+                    draw.rectangle(
+                        [
+                            block_x - padding,
+                            block_y - padding,
+                            block_x + max_line_width + padding,
+                            block_y + total_height + padding,
+                        ],
+                        fill=(0, 0, 0, 180)
+                    )
+
+                    # Draw each line centered within the block
+                    line_y = block_y
+                    for line, line_width, line_height in line_metrics:
+                        line_x = block_x + (max_line_width - line_width) // 2
+                        draw.text((line_x, line_y), line, fill='#FFFFFF', font=font)
+                        line_y += line_height + line_spacing
 
         # Get period name for message
         period_name = self._get_period_name(period)

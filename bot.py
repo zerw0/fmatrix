@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Optional
 
-from nio import AsyncClient, RoomMessage, MatrixRoom
+from nio import AsyncClient, RoomMessage, MatrixRoom, InviteEvent
 from nio.responses import LoginResponse, SyncResponse
 
 from config import Config
@@ -57,10 +57,17 @@ class FMatrixBot:
 
     async def join_configured_rooms(self):
         """Join pre-configured rooms."""
+        if not self.config.auto_join_rooms:
+            logger.warning("No rooms configured in AUTO_JOIN_ROOMS. Skipping auto-join.")
+            return
+
         for room in self.config.auto_join_rooms:
             try:
                 response = await self.client.join(room)
-                logger.info(f"Successfully joined room: {room}")
+                if hasattr(response, 'room_id'):
+                    logger.info(f"Successfully joined room: {room}")
+                else:
+                    logger.error(f"Failed to join room {room}: {response}")
             except Exception as e:
                 logger.error(f"Failed to join room {room}: {e}")
 
@@ -69,9 +76,25 @@ class FMatrixBot:
         for room_id in list(self.client.invited_rooms):
             try:
                 response = await self.client.join(room_id)
-                logger.info(f"Auto-accepted invite to room: {room_id}")
+                if hasattr(response, 'room_id'):
+                    logger.info(f"Auto-accepted invite to room: {room_id}")
+                else:
+                    logger.error(f"Failed to accept invite to {room_id}: {response}")
             except Exception as e:
                 logger.error(f"Failed to accept invite to {room_id}: {e}")
+
+    async def invite_callback(self, room: MatrixRoom, event: InviteEvent):
+        """Handle room invites - auto-join any room we're invited to."""
+        room_id = room.room_id
+        logger.info(f"Received invite to room: {room_id}")
+        try:
+            response = await self.client.join(room_id)
+            if hasattr(response, 'room_id'):
+                logger.info(f"Successfully joined room after invite: {room_id}")
+            else:
+                logger.error(f"Failed to join invited room {room_id}: {response}")
+        except Exception as e:
+            logger.error(f"Failed to join invited room {room_id}: {e}")
 
     async def message_callback(self, room: MatrixRoom, event: RoomMessage):
         """Handle incoming messages."""
@@ -126,6 +149,12 @@ class FMatrixBot:
         self.client.add_event_callback(
             self.message_callback,
             RoomMessage
+        )
+
+        # Add callback for room invites to auto-join
+        self.client.add_event_callback(
+            self.invite_callback,
+            InviteEvent
         )
 
         logger.info("Bot ready - processing new messages only")
