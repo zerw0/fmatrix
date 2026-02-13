@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   fmbot:
-    build: .
+    image: ghcr.io/zerw0/fmatrix:latest
     container_name: fmatrix-bot
     volumes:
       - ./data:/data
