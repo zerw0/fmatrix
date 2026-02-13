@@ -56,7 +56,7 @@ class Database:
 
         await self.db.commit()
         logger.info(f"Database initialized at {self.db_path}")
-        
+
         # Run migrations
         await self._migrate_database()
 
@@ -69,7 +69,7 @@ class Database:
             )
             columns = await cursor.fetchall()
             column_names = [col[1] for col in columns]
-            
+
             if 'lastfm_session_key' not in column_names:
                 logger.info("Adding lastfm_session_key column to user_mappings table")
                 await self.db.execute(
@@ -115,7 +115,7 @@ class Database:
         """Store Last.fm session key for a user."""
         try:
             logger.info(f"Setting session key for user {matrix_user_id}")
-            
+
             # First check if user exists
             cursor = await self.db.execute(
                 "SELECT matrix_user_id FROM user_mappings WHERE matrix_user_id = ?",
@@ -125,9 +125,9 @@ class Database:
             if not row:
                 logger.error(f"User {matrix_user_id} not found in user_mappings")
                 return False
-            
+
             logger.info(f"User {matrix_user_id} found, updating session key")
-            
+
             await self.db.execute(
                 """
                 UPDATE user_mappings

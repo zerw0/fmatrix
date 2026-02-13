@@ -264,7 +264,7 @@ Done! ✅
             await self.send_message(room, "❌ Failed to link account", client)
             return
         logger.info(f"Successfully linked {sender} to {lastfm_username}")
-        
+
         # Verify the link was saved
         saved_username = await self.db.get_lastfm_username(sender)
         logger.info(f"Verification: {sender} is linked to {saved_username}")
@@ -310,27 +310,27 @@ Done! ✅
 4. Done! Your love/unlove commands will work
 
 *(Token expires in 10 minutes)*"""
-            
+
             # Send via DM
             sent_dm = False
             try:
                 # Ensure sender has full user ID format
                 user_id = sender if sender.startswith("@") else f"@{sender}:{client.homeserver.split('https://')[-1]}"
                 logger.info(f"Attempting to send DM to {sender} with full ID: {user_id}")
-                
+
                 # Create DM room
                 from nio.responses import RoomCreateResponse
                 dm_response = await client.room_create(
                     is_direct=True,
                     invite=[user_id]
                 )
-                
+
                 logger.info(f"DM room creation response type: {type(dm_response).__name__}")
-                
+
                 if isinstance(dm_response, RoomCreateResponse):
                     dm_room_id = dm_response.room_id
                     logger.info(f"Created DM room: {dm_room_id}")
-                    
+
                     # Send the message to the DM
                     send_response = await client.room_send(
                         dm_room_id,
@@ -429,7 +429,7 @@ The token expires in 10 minutes.
         """Complete Last.fm authorization by exchanging token for session key."""
         try:
             logger.info(f"complete_auth_flow called - sender type: {type(sender).__name__}, sender value: '{sender}'")
-            
+
             # Get the stored auth token
             auth_token = await self.db.get_auth_token(sender)
             if not auth_token:
