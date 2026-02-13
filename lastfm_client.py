@@ -215,3 +215,214 @@ class LastfmClient:
                 return [albums]
             return albums
         return []
+    async def get_now_playing(self, username: str) -> Optional[Dict]:
+        """Get user's currently playing track."""
+        tracks = await self.get_recent_tracks(username, limit=1)
+        if tracks and len(tracks) > 0:
+            track = tracks[0]
+            # Check if track is currently playing (has @attr with nowplaying key)
+            if isinstance(track.get('artist'), dict):
+                return track
+            elif isinstance(track.get('artist'), str):
+                # Single track result
+                return track
+        return None
+
+    async def get_track_info(self, artist_name: str, track_name: str, username: str = None) -> Optional[Dict]:
+        """Get detailed info about a track."""
+        params = {
+            'method': 'track.getinfo',
+            'artist': artist_name,
+            'track': track_name
+        }
+        if username:
+            params['username'] = username
+        
+        data = await self._request(params)
+        
+        if data and 'track' in data:
+            return data['track']
+        return None
+
+    async def get_user_loved_tracks(self, username: str, limit: int = 10) -> List[Dict]:
+        """Get user's loved tracks."""
+        data = await self._request({
+            'method': 'user.getlovedtracks',
+            'user': username,
+            'limit': limit
+        })
+
+        if data and 'lovedtracks' in data:
+            tracks = data['lovedtracks'].get('track', [])
+            if isinstance(tracks, dict):
+                return [tracks]
+            return tracks
+        return []
+
+    async def love_track(self, artist_name: str, track_name: str, session_key: str) -> bool:
+        """Love a track (requires authenticated session)."""
+        logger.info(f"Loving track: {track_name} by {artist_name}")
+        
+        sig_params = {
+            'method': 'track.love',
+            'artist': artist_name,
+            'track': track_name,
+            'sk': session_key,
+            'api_key': self.api_key
+        }
+        
+        params = {
+            'method': 'track.love',
+            'artist': artist_name,
+            'track': track_name,
+            'sk': session_key,
+            'api_key': self.api_key,
+            'api_sig': self._get_api_signature(sig_params),
+            'format': 'json'
+        }
+        
+        logger.info(f"Params being sent (minus api_sig): method={params['method']}, artist={params['artist']}, track={params['track']}, sk={params['sk'][:10]}..., api_key={params['api_key'][:5]}..., format={params['format']}")
+        
+        session = await self.get_session()
+        try:
+            async with session.post(BASE_URL, data=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                logger.info(f"Last.fm love track response status: {resp.status}")
+                if resp.status == 200:
+                    data = await resp.json()
+                    logger.info(f"Last.fm raw response: {data}")
+                    
+                    # Check if response is wrapped in 'lfm' key
+                    if isinstance(data, dict):
+                        # Try to extract from lfm wrapper
+                        if 'lfm' in data:
+                            lfm_data = data['lfm']
+                        else:
+                            lfm_data = data
+                        
+                        # Check for status
+                        if lfm_data.get('status') == 'ok':
+                            logger.info(f"Successfully loved {track_name} by {artist_name}")
+                            return True
+                        # Empty response {} often means success with no data
+                        elif not data and resp.status == 200:
+                            logger.info(f"Empty response from love_track - treating as success")
+                            return True
+                        else:
+                            logger.warning(f"Unexpected response from love_track: {data}")
+                            # Check if error key exists
+                            if 'error' in data or 'error' in lfm_data:
+                                logger.error(f"Last.fm error: {data.get('error') or lfm_data.get('error')}")
+                            return False
+                else:
+                    logger.error(f"Last.fm love track error: {resp.status}")
+                    error_text = await resp.text()
+                    logger.error(f"Error response: {error_text}")
+        except Exception as e:
+            logger.error(f"Error loving track: {e}", exc_info=True)
+        
+        return False
+
+    async def unlove_track(self, artist_name: str, track_name: str, session_key: str) -> bool:
+        """Unlove a track (requires authenticated session)."""
+        logger.info(f"Unloving track: {track_name} by {artist_name}")
+        
+        sig_params = {
+            'method': 'track.unlove',
+            'artist': artist_name,
+            'track': track_name,
+            'sk': session_key,
+            'api_key': self.api_key
+        }
+        
+        params = {
+            'method': 'track.unlove',
+            'artist': artist_name,
+            'track': track_name,
+            'sk': session_key,
+            'api_key': self.api_key,
+            'api_sig': self._get_api_signature(sig_params),
+            'format': 'json'
+        }
+        
+        session = await self.get_session()
+        try:
+            async with session.post(BASE_URL, data=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                logger.info(f"Last.fm unlove track response status: {resp.status}")
+                if resp.status == 200:
+                    data = await resp.json()
+                    logger.info(f"Last.fm unlove track response: {data}")
+                    # Check if response contains status: ok
+                    if isinstance(data, dict) and data.get('status') == 'ok':
+                        logger.info(f"Successfully unloved {track_name} by {artist_name}")
+                        return True
+                    else:
+                        logger.warning(f"Unexpected response from unlove_track: {data}")
+                        return False
+                else:
+                    logger.error(f"Last.fm unlove track error: {resp.status}")
+                    error_text = await resp.text()
+                    logger.error(f"Error response: {error_text}")
+        except Exception as e:
+            logger.error(f"Error unloving track: {e}", exc_info=True)
+        
+        return False
+
+    def _get_api_signature(self, params: Dict) -> str:
+        """Generate API signature for authenticated requests."""
+        import hashlib
+        # Sort params and create signature string
+        items = sorted(params.items())
+        sig_string = ''.join([f"{k}{v}" for k, v in items]) + self.api_secret
+        return hashlib.md5(sig_string.encode()).hexdigest()
+
+    async def get_auth_token(self) -> Optional[str]:
+        """Get an authorization token for the auth flow."""
+        sig_params = {
+            'method': 'auth.gettoken',
+            'api_key': self.api_key
+        }
+        
+        params = {
+            'method': 'auth.gettoken',
+            'api_key': self.api_key,
+            'api_sig': self._get_api_signature(sig_params),
+            'format': 'json'
+        }
+        
+        data = await self._request(params)
+        
+        if data and 'token' in data:
+            return data['token']
+        
+        logger.error(f"Failed to get auth token: {data}")
+        return None
+
+    async def get_session_from_token(self, token: str) -> Optional[str]:
+        """Exchange an authorized token for a session key."""
+        sig_params = {
+            'method': 'auth.getsession',
+            'token': token,
+            'api_key': self.api_key
+        }
+        
+        params = {
+            'method': 'auth.getsession',
+            'token': token,
+            'api_key': self.api_key,
+            'api_sig': self._get_api_signature(sig_params),
+            'format': 'json'
+        }
+        
+        data = await self._request(params)
+        
+        if data and 'session' in data:
+            session = data['session']
+            if 'key' in session:
+                return session['key']
+        
+        logger.error(f"Failed to get session from token: {data}")
+        return None
+
+    def get_auth_url(self, token: str) -> str:
+        """Get the Last.fm authorization URL for a token."""
+        return f"https://www.last.fm/api/auth/?api_key={self.api_key}&token={token}"

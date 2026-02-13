@@ -131,23 +131,30 @@ class CommandHandler:
         """Parse and handle command."""
         try:
             # Parse command
+            logger.info(f"Raw message: '{message}'")
             parts = message[len(self.config.command_prefix):].split()
+            logger.info(f"Parts after split: {parts}")
             if not parts:
                 return
 
             command = self.normalize_command(parts[0].lower())
             args = parts[1:]
+            logger.info(f"Normalized command: '{command}', args: {args}")
 
             # Route to appropriate handler
             if command == 'help':
                 await self.show_help(room, client)
             elif command == 'lastfm':
                 if not args:
-                    await self.show_help(room, client)
+                    await self.show_now_playing(room, sender, client)
                 elif self.normalize_command(args[0]) == 'help':
                     await self.show_help(room, client)
                 elif self.normalize_command(args[0]) == 'link':
                     await self.link_user(room, sender, args[1:], client)
+                elif self.normalize_command(args[0]) == 'authcomplete':
+                    await self.complete_auth_flow(room, sender, client)
+                elif self.normalize_command(args[0]) == 'sessionkey':
+                    await self.set_session_key(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'stats':
                     await self.show_stats(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'topalbums':
@@ -158,6 +165,14 @@ class CommandHandler:
                     await self.show_top_tracks(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'recent':
                     await self.show_recent_tracks(room, sender, args[1:], client)
+                elif self.normalize_command(args[0]) == 'track':
+                    await self.show_track_info(room, args[1:], client)
+                elif self.normalize_command(args[0]) == 'love':
+                    await self.love_track_command(room, sender, args[1:], client)
+                elif self.normalize_command(args[0]) == 'unlove':
+                    await self.unlove_track_command(room, sender, args[1:], client)
+                elif self.normalize_command(args[0]) == 'loved':
+                    await self.show_loved_tracks(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'whoknows':
                     await self.who_knows(room, args[1:], client)
                 elif self.normalize_command(args[0]) == 'whoknowstrack':
@@ -182,43 +197,54 @@ class CommandHandler:
         help_text = f"""
 FMatrix Bot - Last.fm Stats & Leaderboards
 
-**Commands:**
-`{self.config.command_prefix}fm link <username>` (l) - Link your Last.fm account
+**Main Commands:**
+`{self.config.command_prefix}fm` - Show now playing track (or `{self.config.command_prefix}fm <username>`)
+`{self.config.command_prefix}fm link <username>` (l) - Link Last.fm account & start authorization
+`{self.config.command_prefix}fm authcomplete` - Complete authorization after visiting auth link
 `{self.config.command_prefix}fm stats` (s) - Show listening stats
 `{self.config.command_prefix}fm topartists [period]` (tar) - Show top artists
 `{self.config.command_prefix}fm topalbums [period]` (ta/tb) - Show top albums
 `{self.config.command_prefix}fm toptracks [period]` (tt) - Show top tracks
 `{self.config.command_prefix}fm recent` (r) - Show recent tracks
+
+**Track Commands:**
+`{self.config.command_prefix}fm track <artist> - <track>` - Show track info and playcount
+`{self.config.command_prefix}fm loved [username] [limit]` - Show user's loved tracks
+`{self.config.command_prefix}fm love <artist> - <track>` - Love a track (requires session key)
+`{self.config.command_prefix}fm unlove <artist> - <track>` - Unlove a track (requires session key)
+
+**Room Commands:**
 `{self.config.command_prefix}fm whoknows <artist>` (wk) - Who in this room knows this artist
 `{self.config.command_prefix}fm whoknowstrack <track>` (wkt) - Who in this room knows this track
 `{self.config.command_prefix}fm whoknowsalbum <album>` (wka) - Who in this room knows this album
-`{self.config.command_prefix}fm chart [size] [period] [flags]` (c) - Generate album collage (flags: -s skip empty, -n no titles)
+`{self.config.command_prefix}fm chart [size] [period] [flags]` (c) - Generate album collage
 `{self.config.command_prefix}fm leaderboard [stat]` (lb) - Show room leaderboard
+
 `{self.config.command_prefix}fm help` (?) - Show this help
 
 **Period Abbreviations:**
-7days/7day/7d, 1month/1m, 3month/3m, 6month/6m, 12month/12m, overall/1y/y/all
+7days/7d, 1month/1m, 3month/3m, 6month/6m, 12month/12m, overall
 
-**Period Options:**
-overall/1y/y/all, 12month/12m, 6month/6m, 3month/3m, 1month/1m, 7days/7day/7d
-
-**Leaderboard Types:**
-playcounts (default), artistcount, trackcount
+**Setup for Love/Unlove (One Command!):**
+1. Run: `{self.config.command_prefix}fm link <your_lastfm_username>`
+2. Click the auth link
+3. Authorize on Last.fm
+4. Run: `{self.config.command_prefix}fm authcomplete`
+Done! ✅
 
 **Examples:**
+`{self.config.command_prefix}fm` - Your now playing track
+`{self.config.command_prefix}fm link PlaylistNinja2000` - Link & start auth
 `{self.config.command_prefix}fm ta 7d` - Top albums last 7 days
-`{self.config.command_prefix}fm tt 1m` - Top tracks last month
-`{self.config.command_prefix}fm tar` - Top artists all time
-`{self.config.command_prefix}fm c` - 3x3 weekly chart with album names
-`{self.config.command_prefix}fm c --notitles` - 3x3 weekly chart without titles
-`{self.config.command_prefix}fm c 4x4 1m -s -n` - 4x4 monthly, skip empty, no titles
-`{self.config.command_prefix}fm lb` - Leaderboard by scrobbles
-`{self.config.command_prefix}fm wk Beyoncé` - Who knows Beyoncé
+`{self.config.command_prefix}fm track The Beatles - Hey Jude` - Get Hey Jude info
+`{self.config.command_prefix}fm loved` - Show your loved tracks
+`{self.config.command_prefix}fm love Black Sabbath - Iron Man` - Love Iron Man
         """
         await self.send_message(room, help_text, client)
 
     async def link_user(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
-        """Link a Matrix user to a Last.fm account."""
+        """Link a Matrix user to a Last.fm account and start auth flow."""
+        logger.info(f"link_user called - sender type: {type(sender).__name__}, sender value: '{sender}'")
         if not args:
             await self.send_message(room, f"Usage: `{self.config.command_prefix}fm link <username>`", client)
             return
@@ -226,6 +252,7 @@ playcounts (default), artistcount, trackcount
         lastfm_username = args[0]
 
         # Verify the username exists on Last.fm
+        logger.info(f"Linking {sender} to Last.fm user {lastfm_username}")
         user_info = await self.lastfm.get_user_info(lastfm_username)
         if not user_info:
             await self.send_message(room, f"❌ Last.fm user '{lastfm_username}' not found", client)
@@ -233,14 +260,224 @@ playcounts (default), artistcount, trackcount
 
         # Store the mapping
         success = await self.db.link_user(sender, lastfm_username)
+        if not success:
+            await self.send_message(room, "❌ Failed to link account", client)
+            return
+        logger.info(f"Successfully linked {sender} to {lastfm_username}")
+        
+        # Verify the link was saved
+        saved_username = await self.db.get_lastfm_username(sender)
+        logger.info(f"Verification: {sender} is linked to {saved_username}")
+
+        await self.send_message(
+            room,
+            f"✅ Linked {sender} to Last.fm user **{lastfm_username}**\n\n� Sending authorization link via DM...",
+            client
+        )
+
+        # Now start the auth flow automatically
+        try:
+            logger.info(f"Starting auth flow for {sender}")
+            # Get an auth token
+            auth_token = await self.lastfm.get_auth_token()
+            if not auth_token:
+                logger.error("Failed to get auth token from Last.fm")
+                await self.send_message(
+                    room,
+                    "❌ Failed to get auth token from Last.fm. Please try again later.",
+                    client
+                )
+                return
+
+            # Store the token
+            success = await self.db.store_auth_token(sender, auth_token)
+            if not success:
+                await self.send_message(room, "❌ Failed to store auth token", client)
+                return
+
+            # Get auth URL
+            auth_url = self.lastfm.get_auth_url(auth_token)
+            # Send authorization instructions via DM
+            logger.info(f"Preparing DM message for {sender}")
+            message = f"""🔐 **Last.fm Authorization Required**
+
+👉 **Click here to authorize:** {auth_url}
+
+**Steps:**
+1. Click the link above
+2. Click "Allow" on Last.fm to authorize this bot
+3. Come back to this room and run: `{self.config.command_prefix}fm authcomplete`
+4. Done! Your love/unlove commands will work
+
+*(Token expires in 10 minutes)*"""
+            
+            # Send via DM
+            sent_dm = False
+            try:
+                # Ensure sender has full user ID format
+                user_id = sender if sender.startswith("@") else f"@{sender}:{client.homeserver.split('https://')[-1]}"
+                logger.info(f"Attempting to send DM to {sender} with full ID: {user_id}")
+                
+                # Create DM room
+                from nio.responses import RoomCreateResponse
+                dm_response = await client.room_create(
+                    is_direct=True,
+                    invite=[user_id]
+                )
+                
+                logger.info(f"DM room creation response type: {type(dm_response).__name__}")
+                
+                if isinstance(dm_response, RoomCreateResponse):
+                    dm_room_id = dm_response.room_id
+                    logger.info(f"Created DM room: {dm_room_id}")
+                    
+                    # Send the message to the DM
+                    send_response = await client.room_send(
+                        dm_room_id,
+                        "m.room.message",
+                        {
+                            "msgtype": "m.text",
+                            "body": message
+                        }
+                    )
+                    logger.info(f"DM message send response type: {type(send_response).__name__}")
+                    sent_dm = True
+                    await self.send_message(room, "✅ Authorization link sent via DM!", client)
+                else:
+                    logger.warning(f"Unexpected response type from room_create: {type(dm_response).__name__} - {dm_response}")
+                    await self.send_message(room, f"⚠️ Could not send DM. Showing auth link here:", client)
+                    await self.send_message(room, message, client)
+            except Exception as dm_error:
+                logger.error(f"Failed to send DM: {dm_error}", exc_info=True)
+                await self.send_message(room, f"⚠️ Could not send DM. Showing auth link here:", client)
+                await self.send_message(room, message, client)
+
+        except Exception as e:
+            logger.error(f"Error in auth flow: {e}", exc_info=True)
+            await self.send_message(room, f"❌ Error: {str(e)}", client)
+
+    async def set_session_key(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Set Last.fm session key for authenticated commands."""
+        if not args:
+            await self.send_message(
+                room,
+                f"Usage: `{self.config.command_prefix}fm sessionkey <your_session_key>`\n\nGet your session key from: https://www.last.fm/api/auth",
+                client
+            )
+            return
+
+        session_key = args[0]
+
+        # Store the session key
+        success = await self.db.set_lastfm_session_key(sender, session_key)
         if success:
             await self.send_message(
                 room,
-                f"✅ Linked {sender} to Last.fm user **{lastfm_username}**",
+                f"✅ Session key saved. You can now use love/unlove commands!",
                 client
             )
         else:
-            await self.send_message(room, "❌ Failed to link account", client)
+            await self.send_message(room, "❌ Failed to save session key", client)
+
+    async def start_auth_flow(self, room: MatrixRoom, sender: str, client: AsyncClient):
+        """Start Last.fm authorization flow."""
+        try:
+            # Get an auth token
+            auth_token = await self.lastfm.get_auth_token()
+            if not auth_token:
+                await self.send_message(
+                    room,
+                    "❌ Failed to get auth token from Last.fm. Please try again later.",
+                    client
+                )
+                return
+
+            # Store the token
+            success = await self.db.store_auth_token(sender, auth_token)
+            if not success:
+                await self.send_message(room, "❌ Failed to store auth token", client)
+                return
+
+            # Get auth URL
+            auth_url = self.lastfm.get_auth_url(auth_token)
+
+            # Send DM with instructions
+            try:
+                # Try to send a DM (Matrix doesn't have traditional DMs, but we can mention them)
+                message = f"""
+🔐 **Last.fm Authorization Flow**
+
+1️⃣ Click this link to authorize: {auth_url}
+
+2️⃣ After authorizing, come back and run:
+`{self.config.command_prefix}fm authcomplete`
+
+3️⃣ Your session key will be saved automatically!
+
+The token expires in 10 minutes.
+                """
+                await self.send_message(room, message, client)
+            except Exception as e:
+                logger.error(f"Error sending message: {e}")
+                await self.send_message(room, "❌ Failed to send message", client)
+
+        except Exception as e:
+            logger.error(f"Error in auth flow: {e}", exc_info=True)
+            await self.send_message(room, f"❌ Error: {str(e)}", client)
+
+    async def complete_auth_flow(self, room: MatrixRoom, sender: str, client: AsyncClient):
+        """Complete Last.fm authorization by exchanging token for session key."""
+        try:
+            logger.info(f"complete_auth_flow called - sender type: {type(sender).__name__}, sender value: '{sender}'")
+            
+            # Get the stored auth token
+            auth_token = await self.db.get_auth_token(sender)
+            if not auth_token:
+                logger.warning(f"No auth token found for {sender}")
+                await self.send_message(
+                    room,
+                    f"❌ No pending auth token. Run `{self.config.command_prefix}fm link` first.",
+                    client
+                )
+                return
+
+            logger.info(f"Found auth token for {sender}, exchanging for session key")
+
+            # Exchange token for session key
+            session_key = await self.lastfm.get_session_from_token(auth_token)
+            if not session_key:
+                logger.error(f"Failed to get session key for {sender}")
+                await self.send_message(
+                    room,
+                    "❌ Failed to get session key. Make sure you authorized the app.",
+                    client
+                )
+                return
+
+            logger.info(f"Got session key for {sender}, saving to database")
+
+            # Save the session key
+            success = await self.db.set_lastfm_session_key(sender, session_key)
+            if not success:
+                logger.error(f"Failed to save session key for {sender}")
+                await self.send_message(room, "❌ Failed to save session key", client)
+                return
+
+            logger.info(f"Session key saved successfully for {sender}")
+
+            # Delete the auth token
+            await self.db.delete_auth_token(sender)
+
+            # Success!
+            await self.send_message(
+                room,
+                f"✅ Authorization successful! Session key saved.\n\n🎵 You can now use:\n`{self.config.command_prefix}fm love <artist> - <track>`\n`{self.config.command_prefix}fm unlove <artist> - <track>`",
+                client
+            )
+
+        except Exception as e:
+            logger.error(f"Error completing auth: {e}", exc_info=True)
+            await self.send_message(room, f"❌ Error: {str(e)}", client)
 
     async def show_stats(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
         """Show user's Last.fm stats."""
@@ -364,6 +601,206 @@ playcounts (default), artistcount, trackcount
             message += f"{i}. {name} by {artist_name}\n"
 
         await self.send_message(room, message, client)
+
+    async def show_now_playing(self, room: MatrixRoom, sender: str, client: AsyncClient):
+        """Show user's currently playing track."""
+        target_user = await self._get_target_user(room, sender, client)
+        if not target_user:
+            return
+
+        track = await self.lastfm.get_now_playing(target_user)
+        if not track:
+            await self.send_message(room, f"❌ Could not fetch now playing track for {target_user}", client)
+            return
+
+        name = track.get('name', 'Unknown')
+        artist_name = self._extract_artist_name(track.get('artist', {}))
+        album = track.get('album', {})
+        album_name = album.get('text', 'Unknown') if isinstance(album, dict) else album or 'Unknown'
+        play_count = track.get('userplaycount', 'N/A')
+
+        message = f"🎵 **Now Playing - {target_user}**\n\n"
+        message += f"**{name}**\n"
+        message += f"by *{artist_name}*\n"
+        message += f"on {album_name}\n"
+        message += f"Plays: {play_count}"
+
+        await self.send_message(room, message, client)
+
+    async def show_track_info(self, room: MatrixRoom, args: list, client: AsyncClient):
+        """Show track information including playcount."""
+        if len(args) < 2:
+            await self.send_message(
+                room,
+                f"❌ Usage: {self.config.command_prefix}track <artist> - <track>",
+                client
+            )
+            return
+
+        # Find the dash separator
+        try:
+            dash_idx = args.index('-')
+            artist_name = ' '.join(args[:dash_idx])
+            track_name = ' '.join(args[dash_idx + 1:])
+        except ValueError:
+            await self.send_message(
+                room,
+                f"❌ Usage: {self.config.command_prefix}track <artist> - <track>",
+                client
+            )
+            return
+
+        track_info = await self.lastfm.get_track_info(artist_name, track_name)
+        if not track_info:
+            await self.send_message(room, f"❌ Could not find track: {track_name} by {artist_name}", client)
+            return
+
+        name = track_info.get('name', 'Unknown')
+        artist = track_info.get('artist', {})
+        artist_name = artist.get('name', 'Unknown') if isinstance(artist, dict) else artist or 'Unknown'
+        listeners = track_info.get('listeners', 'N/A')
+        plays = track_info.get('playcount', 'N/A')
+        tags = track_info.get('toptags', {})
+        tag_list = tags.get('tag', []) if isinstance(tags, dict) else []
+        tag_str = ', '.join([t.get('name', '') for t in tag_list[:5]]) if tag_list else 'No tags'
+
+        message = f"🎵 **Track Info: {name}**\n\n"
+        message += f"**Artist:** {artist_name}\n"
+        message += f"**Listeners:** {listeners}\n"
+        message += f"**Total Plays:** {plays}\n"
+        message += f"**Tags:** {tag_str}"
+
+        await self.send_message(room, message, client)
+
+    async def show_loved_tracks(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Show user's loved tracks."""
+        target_user = await self._get_target_user(room, sender, client, args)
+        if not target_user:
+            return
+
+        limit = 10
+        if args and args[0].isdigit():
+            limit = min(int(args[0]), 50)
+
+        tracks = await self.lastfm.get_user_loved_tracks(target_user, limit=limit)
+        if not tracks:
+            await self.send_message(room, f"❌ Could not fetch loved tracks for {target_user}", client)
+            return
+
+        message = f"❤️ **Loved Tracks - {target_user}**\n\n"
+
+        for i, track in enumerate(tracks, 1):
+            name = track.get('name', 'Unknown')
+            artist_name = self._extract_artist_name(track.get('artist', {}))
+            message += f"{i}. {name} by {artist_name}\n"
+
+        await self.send_message(room, message, client)
+
+    async def love_track_command(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Love a track (requires session key)."""
+        logger.info(f"love_track_command called with args: {args}")
+        if len(args) < 2:
+            await self.send_message(
+                room,
+                f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track>",
+                client
+            )
+            return
+
+        # Find the dash separator
+        try:
+            dash_idx = args.index('-')
+            artist_name = ' '.join(args[:dash_idx])
+            track_name = ' '.join(args[dash_idx + 1:])
+            logger.info(f"Parsed: artist='{artist_name}', track='{track_name}'")
+        except ValueError:
+            await self.send_message(
+                room,
+                f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track>",
+                client
+            )
+            return
+
+        # Get session key
+        session_key = await self.db.get_lastfm_session_key(sender)
+        logger.info(f"Got session key for {sender}: {bool(session_key)}")
+        if not session_key:
+            await self.send_message(
+                room,
+                f"❌ You don't have a Last.fm session key. This feature requires Last.fm authentication.",
+                client
+            )
+            return
+
+        # Love the track
+        logger.info(f"Calling love_track with artist='{artist_name}', track='{track_name}', session_key=***")
+        success = await self.lastfm.love_track(artist_name, track_name, session_key)
+        if success:
+            await self.send_message(
+                room,
+                f"❤️ Loved: **{track_name}** by {artist_name}",
+                client
+            )
+        else:
+            await self.send_message(
+                room,
+                f"❌ Failed to love track: {track_name} by {artist_name}",
+                client
+            )
+
+    async def unlove_track_command(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Unlove a track (requires session key)."""
+        logger.info(f"unlove_track_command called with args: {args}")
+        if len(args) < 2:
+            await self.send_message(
+                room,
+                f"❌ Usage: {self.config.command_prefix}fm unlove <artist> - <track>",
+                client
+            )
+            return
+
+        # Find the dash separator
+        try:
+            dash_idx = args.index('-')
+            artist_name = ' '.join(args[:dash_idx])
+            track_name = ' '.join(args[dash_idx + 1:])
+            logger.info(f"Parsed unlove: artist='{artist_name}', track='{track_name}'")
+        except ValueError:
+            await self.send_message(
+                room,
+                f"❌ Usage: {self.config.command_prefix}fm unlove <artist> - <track>",
+                client
+            )
+            return
+
+        # Get session key
+        session_key = await self.db.get_lastfm_session_key(sender)
+        logger.info(f"Got session key for {sender}: {bool(session_key)}")
+        if not session_key:
+            await self.send_message(
+                room,
+                f"❌ You don't have a Last.fm session key. This feature requires Last.fm authentication.",
+                client
+            )
+            return
+
+        # Unlove the track
+        logger.info(f"Calling unlove_track with artist='{artist_name}', track='{track_name}', session_key=***")
+        success = await self.lastfm.unlove_track(artist_name, track_name, session_key)
+        if success:
+            await self.send_message(
+                room,
+                f"💔 Unloved: **{track_name}** by {artist_name}",
+                client
+            )
+        else:
+            await self.send_message(
+                room,
+                f"❌ Failed to unlove track: {track_name} by {artist_name}",
+                client
+            )
+
+
 
     async def show_leaderboard(self, room: MatrixRoom, args: list, client: AsyncClient):
         """Show leaderboard of room members' Last.fm stats."""
