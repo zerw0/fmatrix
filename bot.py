@@ -1,0 +1,141 @@
+"""
+Main Matrix Bot Implementation
+"""
+
+import logging
+import os
+from typing import Optional
+
+from nio import AsyncClient, RoomMessage, MatrixRoom
+from nio.responses import LoginResponse, SyncResponse
+
+from config import Config
+from database import Database
+from lastfm_client import LastfmClient
+from commands import CommandHandler
+
+logger = logging.getLogger(__name__)
+
+
+class FMatrixBot:
+    """Matrix bot for Last.fm stats and leaderboards."""
+
+    def __init__(self):
+        self.config = Config()
+        self.client: Optional[AsyncClient] = None
+        self.db: Optional[Database] = None
+        self.lastfm = LastfmClient(
+            self.config.lastfm_api_key,
+            self.config.lastfm_api_secret
+        )
+        self.command_handler: Optional[CommandHandler] = None
+
+    async def init_db(self):
+        """Initialize the database."""
+        self.db = Database(self.config.db_path)
+        await self.db.init()
+        logger.info("Database initialized")
+
+    async def setup_client(self):
+        """Set up the Matrix client."""
+        self.client = AsyncClient(
+            self.config.matrix_homeserver,
+            self.config.matrix_user_id
+        )
+
+        logger.info(f"Matrix client initialized for {self.config.matrix_user_id}")
+
+    async def login(self):
+        """Log in to the Matrix server."""
+        login_response = await self.client.login(self.config.matrix_password)
+
+        if isinstance(login_response, LoginResponse):
+            logger.info(f"Logged in successfully. Device ID: {login_response.device_id}")
+        else:
+            logger.error(f"Login failed: {login_response}")
+            raise RuntimeError("Failed to login to Matrix server")
+
+    async def join_configured_rooms(self):
+        """Join pre-configured rooms."""
+        for room in self.config.auto_join_rooms:
+            try:
+                response = await self.client.join(room)
+                logger.info(f"Successfully joined room: {room}")
+            except Exception as e:
+                logger.error(f"Failed to join room {room}: {e}")
+
+    async def accept_pending_invites(self):
+        """Accept all pending room invites."""
+        for room_id in list(self.client.invited_rooms):
+            try:
+                response = await self.client.join(room_id)
+                logger.info(f"Auto-accepted invite to room: {room_id}")
+            except Exception as e:
+                logger.error(f"Failed to accept invite to {room_id}: {e}")
+
+    async def message_callback(self, room: MatrixRoom, event: RoomMessage):
+        """Handle incoming messages."""
+        try:
+            # Ignore messages from the bot itself
+            if event.sender == self.config.matrix_user_id:
+                return
+
+            # Check if message starts with command prefix
+            if not event.body.startswith(self.config.command_prefix):
+                return
+
+            # Handle command
+            await self.command_handler.handle_command(
+                room=room,
+                sender=event.sender,
+                message=event.body,
+                client=self.client
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling message: {e}", exc_info=True)
+
+    async def run(self):
+        """Run the bot."""
+        await self.setup_client()
+        self.command_handler = CommandHandler(
+            self.db,
+            self.lastfm,
+            self.config
+        )
+
+        await self.login()
+
+        # Join configured rooms
+        await self.join_configured_rooms()
+
+        # Accept any pending invites from before bot started
+        await self.accept_pending_invites()
+
+        logger.info("Starting sync loop...")
+        # Use custom sync loop to handle invites
+        await self.sync_with_invite_handling()
+
+    async def sync_with_invite_handling(self):
+        """Sync loop that handles room invites automatically."""
+        # First sync: establish sync token without processing events
+        logger.info("Initial sync - establishing connection...")
+        initial_sync = await self.client.sync(timeout=1)
+
+        # NOW set up event handlers after we have the sync token
+        self.client.add_event_callback(
+            self.message_callback,
+            RoomMessage
+        )
+
+        logger.info("Bot ready - processing new messages only")
+        while True:
+            # Check for new invites before syncing
+            await self.accept_pending_invites()
+
+            # Sync with new messages only (10 second timeout for fast message polling)
+            sync_response = await self.client.sync(timeout=10000)
+
+            if not isinstance(sync_response, SyncResponse):
+                logger.warning(f"Sync failed: {sync_response}")
+                continue

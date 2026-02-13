@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  fmbot:
+    build: .
+    container_name: fmatrix-bot
+    volumes:
+      - ./data:/data
+      - ./.env:/app/.env
+    restart: unless-stopped
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge

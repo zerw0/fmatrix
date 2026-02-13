@@ -1,0 +1,18 @@
+[Unit]
+Description=FMatrix - Last.fm Matrix Bot
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fmatrix
+WorkingDirectory=/opt/fmatrix
+ExecStart=/usr/bin/python3 /opt/fmatrix/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment="PATH=/opt/fmatrix/venv/bin"
+
+[Install]
+WantedBy=multi-user.target
