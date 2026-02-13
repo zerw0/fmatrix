@@ -8,6 +8,19 @@ services:
       - ./data:/data
       - ./.env:/app/.env
     restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /data/health && [ $$(($$$(date +%s) - $$$(cat /data/health))) -lt 90 ] || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - default
 

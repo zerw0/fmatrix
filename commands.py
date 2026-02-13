@@ -10,6 +10,7 @@ from io import BytesIO
 from typing import Optional
 from nio import AsyncClient, RoomMessage, MatrixRoom
 from nio.responses import UploadResponse, UploadError
+from PIL import Image, ImageDraw, ImageFont
 
 from database import Database
 from lastfm_client import LastfmClient
@@ -35,6 +36,8 @@ class CommandHandler:
         'whoknowstrack': 'whoknowstrack',
         'wka': 'whoknowsalbum',
         'whoknowsalbum': 'whoknowsalbum',
+        'c': 'chart',
+        'chart': 'chart',
         'lb': 'leaderboard',
         'r': 'recent',
         's': 'stats',
@@ -161,6 +164,8 @@ class CommandHandler:
                     await self.who_knows_track(room, args[1:], client)
                 elif self.normalize_command(args[0]) == 'whoknowsalbum':
                     await self.who_knows_album(room, args[1:], client)
+                elif self.normalize_command(args[0]) == 'chart':
+                    await self.generate_chart(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'leaderboard':
                     await self.show_leaderboard(room, args[1:], client)
                 else:
@@ -187,6 +192,7 @@ FMatrix Bot - Last.fm Stats & Leaderboards
 `{self.config.command_prefix}fm whoknows <artist>` (wk) - Who in this room knows this artist
 `{self.config.command_prefix}fm whoknowstrack <track>` (wkt) - Who in this room knows this track
 `{self.config.command_prefix}fm whoknowsalbum <album>` (wka) - Who in this room knows this album
+`{self.config.command_prefix}fm chart [size] [period] [flags]` (c) - Generate album collage (flags: -s skip empty, -n no titles)
 `{self.config.command_prefix}fm leaderboard [stat]` (lb) - Show room leaderboard
 `{self.config.command_prefix}fm help` (?) - Show this help
 
@@ -203,6 +209,9 @@ playcounts (default), artistcount, trackcount
 `{self.config.command_prefix}fm ta 7d` - Top albums last 7 days
 `{self.config.command_prefix}fm tt 1m` - Top tracks last month
 `{self.config.command_prefix}fm tar` - Top artists all time
+`{self.config.command_prefix}fm c` - 3x3 weekly chart with album names
+`{self.config.command_prefix}fm c --notitles` - 3x3 weekly chart without titles
+`{self.config.command_prefix}fm c 4x4 1m -s -n` - 4x4 monthly, skip empty, no titles
 `{self.config.command_prefix}fm lb` - Leaderboard by scrobbles
 `{self.config.command_prefix}fm wk Beyoncé` - Who knows Beyoncé
         """
@@ -751,6 +760,216 @@ playcounts (default), artistcount, trackcount
                 "formatted_body": html
             }
         )
+
+    async def generate_chart(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Generate a collage chart of top albums."""
+        # Parse arguments: size, period, and flags
+        size = '3x3'
+        period = '7days'
+        skip_empty = False
+        show_titles = True
+
+        # Filter out flags
+        filtered_args = []
+        for arg in args:
+            if arg.lower() in ['--skipempty', '--skip-empty', '-s']:
+                skip_empty = True
+            elif arg.lower() in ['--notitles', '--no-titles', '--notitle', '-n']:
+                show_titles = False
+            else:
+                filtered_args.append(arg)
+
+        if filtered_args:
+            # Check if first arg is a size (NxN format)
+            if 'x' in filtered_args[0].lower():
+                size = filtered_args[0].lower()
+                if len(filtered_args) > 1:
+                    period = self.normalize_period(filtered_args[1])
+            else:
+                # First arg is period
+                period = self.normalize_period(filtered_args[0])
+                if len(filtered_args) > 1 and 'x' in filtered_args[1].lower():
+                    size = filtered_args[1].lower()
+
+        # Validate size
+        try:
+            rows, cols = map(int, size.split('x'))
+            if rows < 2 or rows > 10 or cols < 2 or cols > 10:
+                await self.send_message(room, "❌ Chart size must be between 2x2 and 10x10", client)
+                return
+        except:
+            await self.send_message(room, f"❌ Invalid size format '{size}'. Use format like 3x3, 4x4, 5x5", client)
+            return
+
+        # Validate period
+        if not await self._validate_period(room, period, client):
+            return
+
+        # Get target user
+        lastfm_user = await self._get_target_user(room, sender, client)
+        if not lastfm_user:
+            return
+
+        await self.send_message(room, f"⏳ Generating {size} chart for {lastfm_user}...", client)
+
+        # Fetch top albums
+        total_albums = rows * cols
+        albums = await self.lastfm.get_top_albums(lastfm_user, period, limit=total_albums)
+
+        if not albums:
+            await self.send_message(room, f"❌ No albums found for {lastfm_user} in this period", client)
+            return
+
+        # Download album cover images
+        tile_size = 300
+        album_tiles = []  # List of (image, album_name, artist_name, has_cover)
+
+        async with aiohttp.ClientSession() as session:
+            for album in albums:
+                if len(album_tiles) >= total_albums:
+                    break
+
+                image_url = None
+                album_name = album.get('name', 'Unknown')
+                artist_name = self._extract_artist_name(album.get('artist', {}))
+
+                # Get extralarge image (300x300)
+                album_images = album.get('image', [])
+                if isinstance(album_images, list):
+                    for img in album_images:
+                        if img.get('size') == 'extralarge':
+                            url = img.get('#text', '').strip()
+                            if url and '/noimage' not in url.lower():
+                                image_url = url
+                                break
+
+                # Download image
+                if image_url:
+                    try:
+                        async with session.get(image_url) as resp:
+                            if resp.status == 200:
+                                image_data = await resp.read()
+                                img = Image.open(BytesIO(image_data))
+                                img = img.resize((tile_size, tile_size), Image.Resampling.LANCZOS)
+                                album_tiles.append((img, album_name, artist_name, True))
+                                continue
+                    except Exception as e:
+                        logger.warning(f"Failed to download album image: {e}")
+
+                # Skip or create placeholder based on flag
+                if skip_empty:
+                    continue
+                else:
+                    placeholder = Image.new('RGB', (tile_size, tile_size), color='#1a1a1a')
+                    album_tiles.append((placeholder, album_name, artist_name, False))
+
+        # Pad with placeholders if needed (only if not skipping empty)
+        if not skip_empty:
+            while len(album_tiles) < total_albums:
+                placeholder = Image.new('RGB', (tile_size, tile_size), color='#1a1a1a')
+                album_tiles.append((placeholder, '', '', False))
+
+        # Adjust grid size if we have fewer items after filtering
+        if skip_empty and len(album_tiles) < total_albums:
+            actual_count = len(album_tiles)
+            # Try to maintain aspect ratio close to original
+            cols = min(cols, actual_count)
+            rows = (actual_count + cols - 1) // cols
+
+        # Create collage
+        collage_width = cols * tile_size
+        collage_height = rows * tile_size
+        collage = Image.new('RGB', (collage_width, collage_height), color='#0d0d0d')
+
+        # Load font for text overlay
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+        except:
+            try:
+                # macOS fallback
+                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 18)
+            except:
+                font = ImageFont.load_default()
+
+        # Paste album covers with text overlay
+        for idx, (img, album_name, artist_name, has_cover) in enumerate(album_tiles):
+            if idx >= rows * cols:
+                break
+
+            row = idx // cols
+            col = idx % cols
+            x = col * tile_size
+            y = row * tile_size
+
+            # Paste the album cover
+            collage.paste(img, (x, y))
+
+            # Add text overlay with album name (if enabled)
+            if album_name and show_titles:
+                draw = ImageDraw.Draw(collage)
+
+                # Truncate long album names
+                display_name = album_name if len(album_name) <= 25 else album_name[:22] + '...'
+
+                # Draw semi-transparent background for text
+                text_bbox = draw.textbbox((0, 0), display_name, font=font)
+                text_width = text_bbox[2] - text_bbox[0]
+                text_height = text_bbox[3] - text_bbox[1]
+
+                # Position text at bottom of tile
+                text_x = x + (tile_size - text_width) // 2
+                text_y = y + tile_size - text_height - 10
+
+                # Draw background rectangle
+                padding = 5
+                draw.rectangle(
+                    [text_x - padding, text_y - padding, text_x + text_width + padding, text_y + text_height + padding],
+                    fill=(0, 0, 0, 180)
+                )
+
+                # Draw text
+                draw.text((text_x, text_y), display_name, fill='#FFFFFF', font=font)
+
+        # Get period name for message
+        period_name = self._get_period_name(period)
+
+        # Save to BytesIO
+        image_buffer = BytesIO()
+        collage.save(image_buffer, format='PNG')
+        image_buffer.seek(0)
+
+        # Upload to Matrix
+        try:
+            upload_response, _ = await client.upload(
+                image_buffer,
+                content_type='image/png',
+                filename=f'{lastfm_user}_{size}_{period}_chart.png',
+                filesize=len(image_buffer.getvalue())
+            )
+
+            if isinstance(upload_response, UploadResponse):
+                await client.room_send(
+                    room_id=room.room_id,
+                    message_type='m.room.message',
+                    content={
+                        'msgtype': 'm.image',
+                        'body': f'{size} {period_name} chart for {lastfm_user}',
+                        'url': upload_response.content_uri,
+                        'info': {
+                            'mimetype': 'image/png',
+                            'size': len(image_buffer.getvalue()),
+                            'w': collage_width,
+                            'h': collage_height
+                        }
+                    }
+                )
+                logger.info(f"Chart sent successfully for {lastfm_user}")
+            else:
+                await self.send_message(room, f"❌ Failed to upload chart image", client)
+                logger.error(f"Upload failed: {upload_response}")
+        except Exception as e:
+            await self.send_message(room, f"❌ Error generating chart: {str(e)}", client)
+            logger.error(f"Chart generation error: {e}", exc_info=True)
 
     async def send_message(self, room: MatrixRoom, message: str, client: AsyncClient):
         """Send a message to the room."""

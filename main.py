@@ -6,6 +6,7 @@ FMatrix - Matrix Bot for Last.fm Stats and Leaderboards
 import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 
 from bot import FMatrixBot
@@ -23,12 +24,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def health_check_loop():
+    """Periodically write health status to file for Docker healthcheck."""
+    # Use /data in Docker, ./data locally
+    health_dir = Path('/data') if Path('/data').exists() else Path('./data')
+    health_dir.mkdir(exist_ok=True)
+    health_file = health_dir / 'health'
+
+    while True:
+        try:
+            health_file.write_text(f"{time.time():.0f}")
+        except Exception as e:
+            logger.error(f"Health check write failed: {e}")
+        await asyncio.sleep(30)
+
+
 async def main():
     """Main entry point for the bot."""
     logger.info("Starting FMatrix bot...")
 
     # Create bot instance
     bot = FMatrixBot()
+
+    # Start health check loop in background
+    asyncio.create_task(health_check_loop())
 
     try:
         # Initialize database
