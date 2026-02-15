@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 class FMatrixBot:
     """Matrix bot for Last.fm stats and leaderboards."""
 
-    def __init__(self):
-        self.config = Config()
+    def __init__(self, config_path=None):
+        self.config = Config(config_path=config_path)
         self.client: Optional[AsyncClient] = None
         self.db: Optional[Database] = None
         self.lastfm = LastfmClient(

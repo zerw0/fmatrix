@@ -16,6 +16,9 @@ Here's what you need:
 
 **3. Setup**
 
+Either use a config file (same format as `.env.example`) or set environment variables.
+
+**Option A – config file**
 ```bash
 git clone https://github.com/zerw0/fmatrix
 cd fmatrix
@@ -23,14 +26,8 @@ cp .env.example .env
 nano .env  # add your credentials
 ```
 
-Your `.env` should look like:
-```
-MATRIX_HOMESERVER=https://matrix.org
-MATRIX_USER_ID=@yourbot:matrix.org
-MATRIX_PASSWORD=your_password
-LASTFM_API_KEY=get_this_from_lastfm
-LASTFM_API_SECRET=get_this_too
-```
+**Option B – environment variables**  
+Export `MATRIX_*`, `LASTFM_*`, etc. (see Config section below).
 
 **4. Run it**
 
@@ -38,11 +35,19 @@ With Docker:
 ```bash
 docker-compose up -d
 ```
+(Uses `.env` via `env_file`; see docker-compose section.)
 
-Or just Python:
+Or with Python using a config file:
 ```bash
 pip install -r requirements.txt
-python main.py
+fmatrix --config .env
+# or: python main.py --config .env
+```
+
+Or with Python using only environment variables:
+```bash
+export MATRIX_PASSWORD=… LASTFM_API_KEY=…  # etc.
+fmatrix
 ```
 
 **5. Use it**
@@ -102,7 +107,7 @@ bot.py              Matrix client stuff
 commands.py         All the command logic
 lastfm_client.py    Talks to Last.fm's API
 database.py         SQLite for caching and user links
-config.py           Loads your .env settings
+config.py           Reads env vars and optional .env-format config file
 ```
 
 The bot stores two things in SQLite:
@@ -111,7 +116,13 @@ The bot stores two things in SQLite:
 
 ## Config
 
-Everything's in `.env`:
+Configuration is read from **environment variables**. You can optionally use an **.env-format config file** (see `.env.example`); values in the file override the same options set in the environment.
+
+**Ways to supply config:**
+- **Config file:** `fmatrix --config /path/to/config.env` or set `CONFIG_FILE=/path/to/config.env`
+- **Environment:** export the variables (e.g. in your shell or via Docker `env_file` / `environment`)
+
+**Options** (same keys in env or in the config file):
 
 ```bash
 MATRIX_HOMESERVER=https://matrix.org        # Your Matrix server
@@ -122,6 +133,7 @@ LASTFM_API_SECRET=def456                     # Also from Last.fm
 COMMAND_PREFIX=!                             # Change if you want
 LOG_LEVEL=INFO                               # DEBUG for more logs
 DATA_DIR=/data                               # Where to save the database
+AUTO_JOIN_ROOMS=                             # Comma-separated room IDs/aliases to auto-join
 ```
 
 ## Notes
