@@ -63,6 +63,7 @@ in
         MATRIX_PASSWORD=your_secure_password_here
         LASTFM_API_KEY=your_lastfm_api_key_here
         LASTFM_API_SECRET=your_lastfm_api_secret_here
+        DISCOGS_USER_TOKEN=your_discogs_token_here
       '';
       type = lib.types.str;
     };
