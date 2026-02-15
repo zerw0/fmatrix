@@ -15,32 +15,32 @@ in
       type = lib.types.str;
       example = "https://matrix.org";
     };
-    matrix.user_id = lib.mkOption {
+    matrix.userId = lib.mkOption {
       description = "User ID of the fmatrix bot";
       type = lib.types.str;
       example = "@fmatrix:matrix.org";
     };
-    matrix.device_id = lib.mkOption {
+    matrix.deviceId = lib.mkOption {
       description = "Device ID of the fmatrix bot (optional)";
       default = "FMBOT001";
       type = lib.types.str;
     };
-    settings.command_prefix = lib.mkOption {
+    settings.commandPrefix = lib.mkOption {
       description = "Command prefix";
       default = "!";
       type = lib.types.str;
     };
-    settings.auto_join_rooms = lib.mkOption {
+    settings.autoJoinRooms = lib.mkOption {
       description = "Optional: List of room IDs to auto-join on startup";
       default = [ ];
       example = [
         "!roomid1:server.com"
         "!roomid2:server.com"
       ];
-      after = room: lib.strings.concatStringsSep ", " room;
-      type = lib.types.list;
+      apply = room: lib.strings.concatStringsSep ", " room;
+      type = lib.types.listOf lib.types.str;
     };
-    settings.log_level = lib.mkOption {
+    settings.logLevel = lib.mkOption {
       default = "INFO";
       type = lib.types.enum [
         "INFO"
@@ -86,16 +86,15 @@ in
         DynamicUser = true;
         StateDirectory = cfg.stateDir;
         StateDirectoryMode = "0700";
-        Environment = {
-          MATRIX_HOMESERVER = cfg.matrix.homeserver;
-          MATRIX_USER_ID = cfg.matrix.user_id;
-          MATRIX_DEVICE_ID = cfg.matrix.device_id;
-          COMMAND_PREFIX = cfg.settings.command_prefix;
-          LOG_LEVEL = cfg.settings.log_level;
-          DATA_DIR = config.systemd.services.fmatrix.stateDir;
-          AUTO_JOIN_ROOMS = cfg.settings.auto_join_rooms;
-        };
-        EnvironmentFile = cfg.environmentFile;
+        Environment = [
+          "MATRIX_HOMESERVER=${cfg.matrix.homeserver}"
+          "MATRIX_USER_ID=${cfg.matrix.userId}"
+          "MATRIX_DEVICE_ID=${cfg.matrix.deviceId}"
+          "COMMAND_PREFIX=${cfg.settings.commandPrefix}"
+          "LOG_LEVEL=${cfg.settings.logLevel}"
+          "DATA_DIR=/var/lib/${cfg.stateDir}"
+          "AUTO_JOIN_ROOMS=${cfg.settings.autoJoinRooms}"
+        ];
         # Hardening
         DeviceAllow = [ "/dev/null rw" ];
         DevicePolicy = "strict";

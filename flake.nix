@@ -33,6 +33,18 @@
           };
         }
       );
+      nixosModules.fmatrix =
+        {
+          config,
+          lib,
+          pkgs,
+          ...
+        }:
+        import ./module.nix {
+          inherit config lib pkgs;
+          fmatrix = self.packages.${pkgs.system}.fmatrix;
+        };
+      nixosModules.default = self.nixosModules.fmatrix;
       packages = eachSystem (system: {
         default = self.packages.${system}.fmatrix;
         fmatrix = nixpkgs.legacyPackages.${system}.callPackage ./package.nix { };

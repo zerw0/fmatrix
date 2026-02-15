@@ -19,4 +19,5 @@ pkgs.python3Packages.buildPythonApplication rec {
     pillow
     matrix-nio
   ];
+  meta.mainProgram = "fmatrix";
 }
