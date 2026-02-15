@@ -31,6 +31,13 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS discogs_mappings (
+                matrix_user_id TEXT PRIMARY KEY,
+                discogs_username TEXT UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS stats_cache (
                 lastfm_username TEXT PRIMARY KEY,
                 stats_json TEXT NOT NULL,
@@ -52,6 +59,9 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_user_mappings_lastfm
                 ON user_mappings(lastfm_username);
+
+            CREATE INDEX IF NOT EXISTS idx_discogs_mappings_username
+                ON discogs_mappings(discogs_username);
         """)
 
         await self.db.commit()
@@ -256,3 +266,43 @@ class Database:
             (max_age_hours,)
         )
         await self.db.commit()
+
+    # Discogs-related methods
+    async def link_discogs_user(self, matrix_user_id: str, discogs_username: str) -> bool:
+        """Link a Matrix user to a Discogs account."""
+        try:
+            await self.db.execute(
+                """
+                INSERT OR REPLACE INTO discogs_mappings
+                (matrix_user_id, discogs_username, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (matrix_user_id, discogs_username)
+            )
+            await self.db.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error linking Discogs user: {e}")
+            return False
+
+    async def get_discogs_username(self, matrix_user_id: str) -> Optional[str]:
+        """Get the Discogs username for a Matrix user."""
+        cursor = await self.db.execute(
+            "SELECT discogs_username FROM discogs_mappings WHERE matrix_user_id = ?",
+            (matrix_user_id,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def unlink_discogs_user(self, matrix_user_id: str) -> bool:
+        """Unlink a Matrix user from their Discogs account."""
+        try:
+            await self.db.execute(
+                "DELETE FROM discogs_mappings WHERE matrix_user_id = ?",
+                (matrix_user_id,)
+            )
+            await self.db.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error unlinking Discogs user: {e}")
+            return False

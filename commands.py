@@ -7,7 +7,7 @@ import json
 import re
 import aiohttp
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Dict, Callable, Any
 from nio import AsyncClient, RoomMessage, MatrixRoom
 from nio.responses import UploadResponse, UploadError
 from PIL import Image, ImageDraw, ImageFont
@@ -17,6 +17,60 @@ from lastfm_client import LastfmClient
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+
+class PaginationManager:
+    """Manages paginated messages with reaction-based navigation."""
+
+    def __init__(self):
+        # Store pagination state: event_id -> {room_id, user_id, current_page, total_pages, callback, reaction_event_ids}
+        self.paginations: Dict[str, Dict[str, Any]] = {}
+
+    def register(self, event_id: str, room_id: str, user_id: str, current_page: int,
+                 total_pages: int, callback: Callable):
+        """Register a paginated message."""
+        self.paginations[event_id] = {
+            'room_id': room_id,
+            'user_id': user_id,
+            'current_page': current_page,
+            'total_pages': total_pages,
+            'callback': callback,
+            'reaction_event_ids': []  # Store reaction event IDs for later removal
+        }
+
+    def get(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """Get pagination state for an event."""
+        return self.paginations.get(event_id)
+
+    def update_page(self, event_id: str, new_page: int):
+        """Update the current page for a pagination."""
+        if event_id in self.paginations:
+            self.paginations[event_id]['current_page'] = new_page
+
+    def add_reaction_event_id(self, event_id: str, reaction_event_id: str):
+        """Store a reaction event ID for later removal."""
+        if event_id in self.paginations:
+            self.paginations[event_id]['reaction_event_ids'].append(reaction_event_id)
+
+    def get_reaction_event_ids(self, event_id: str) -> list:
+        """Get all reaction event IDs for a message."""
+        if event_id in self.paginations:
+            return self.paginations[event_id].get('reaction_event_ids', [])
+        return []
+
+    def clear_reaction_event_ids(self, event_id: str):
+        """Clear stored reaction event IDs."""
+        if event_id in self.paginations:
+            self.paginations[event_id]['reaction_event_ids'] = []
+
+    def remove(self, event_id: str):
+        """Remove a pagination."""
+        self.paginations.pop(event_id, None)
+
+    def cleanup_old(self, max_age_seconds: int = 3600):
+        """Remove old paginations (if needed in future)."""
+        # For now, we'll keep them until explicitly removed
+        pass
 
 
 class CommandHandler:
@@ -43,6 +97,10 @@ class CommandHandler:
         's': 'stats',
         'l': 'link',
         '?': 'help',
+        'discogs': 'discogs',
+        'dg': 'discogs',
+        'dgc': 'dgcollection',
+        'dgw': 'dgwantlist',
     }
 
     # Period abbreviations
@@ -74,10 +132,12 @@ class CommandHandler:
         '7days': 'Last 7 Days'
     }
 
-    def __init__(self, db: Database, lastfm: LastfmClient, config: Config):
+    def __init__(self, db: Database, lastfm: LastfmClient, discogs, config: Config):
         self.db = db
         self.lastfm = lastfm
+        self.discogs = discogs
         self.config = config
+        self.pagination = PaginationManager()
 
     @staticmethod
     def normalize_command(cmd: str) -> str:
@@ -185,6 +245,31 @@ class CommandHandler:
                     await self.show_leaderboard(room, args[1:], client)
                 else:
                     await self.send_message(room, f"Unknown command: {args[0]}", client)
+            elif command == 'discogs':
+                if not self.discogs:
+                    await self.send_message(room, "❌ Discogs integration is not configured.", client)
+                    return
+
+                if not args:
+                    await self.show_discogs_help(room, client)
+                elif self.normalize_command(args[0]) == 'help':
+                    await self.show_discogs_help(room, client)
+                elif self.normalize_command(args[0]) == 'link':
+                    await self.link_discogs_user(room, sender, args[1:], client)
+                elif self.normalize_command(args[0]) == 'stats':
+                    await self.show_discogs_stats(room, sender, args[1:], client)
+                elif self.normalize_command(args[0]) == 'collection':
+                    await self.show_discogs_collection(room, sender, args[1:], client)
+                elif self.normalize_command(args[0]) == 'wantlist':
+                    await self.show_discogs_wantlist(room, sender, args[1:], client)
+                elif self.normalize_command(args[0]) == 'search':
+                    await self.search_discogs(room, args[1:], client)
+                elif self.normalize_command(args[0]) == 'artist':
+                    await self.show_discogs_artist(room, args[1:], client)
+                elif self.normalize_command(args[0]) == 'release':
+                    await self.show_discogs_release(room, args[1:], client)
+                else:
+                    await self.send_message(room, f"Unknown Discogs command: {args[0]}", client)
             else:
                 await self.send_message(room, f"Unknown command. Type `{self.config.command_prefix}fm help` for help.", client)
 
@@ -192,8 +277,109 @@ class CommandHandler:
             logger.error(f"Error handling command: {e}", exc_info=True)
             await self.send_message(room, f"Error processing command: {str(e)}", client)
 
+    async def handle_reaction(self, room: MatrixRoom, event, sender: str, client: AsyncClient):
+        """Handle reaction events for pagination."""
+        try:
+            logger.info(f"Reaction event received - sender: {sender}")
+
+            # Get the event being reacted to from ReactionEvent
+            reacted_event_id = event.reacts_to
+            reaction_key = event.key
+
+            logger.info(f"Reacted event ID: {reacted_event_id}, Reaction key: {reaction_key}")
+
+            if not reacted_event_id or not reaction_key:
+                logger.info("Missing event ID or reaction key, skipping")
+                return
+
+            # Check if this is a paginated message
+            pagination = self.pagination.get(reacted_event_id)
+            logger.info(f"Pagination state: {pagination}")
+            logger.info(f"All paginations: {list(self.pagination.paginations.keys())}")
+
+            if not pagination:
+                logger.info("Not a paginated message, skipping")
+                return
+
+            # Verify the reactor is the original user
+            if sender != pagination['user_id']:
+                logger.info(f"Reactor {sender} is not the original user {pagination['user_id']}, skipping")
+                return
+
+            # Handle navigation
+            current_page = pagination['current_page']
+            total_pages = pagination['total_pages']
+            new_page = current_page
+
+            logger.info(f"Current page: {current_page}, Total pages: {total_pages}, Reaction: {reaction_key}")
+
+            if reaction_key == "⬅️" and current_page > 1:
+                new_page = current_page - 1
+            elif reaction_key == "➡️" and current_page < total_pages:
+                new_page = current_page + 1
+            else:
+                logger.info(f"Reaction {reaction_key} not applicable for current page")
+                return
+
+            logger.info(f"Navigating to page {new_page}")
+
+            # Update page in memory
+            self.pagination.update_page(reacted_event_id, new_page)
+
+            # Call the callback to generate new content
+            callback = pagination['callback']
+            new_content = await callback(new_page)
+
+            # Delete the old message
+            import asyncio
+            try:
+                await client.room_redact(room.room_id, reacted_event_id)
+                logger.info(f"Deleted message {reacted_event_id}")
+            except Exception as e:
+                logger.warning(f"Could not delete message: {e}")
+
+            await asyncio.sleep(0.1)
+
+            # Send new message with fresh reactions
+            new_event_id = await self.send_message(room, new_content, client)
+            logger.info(f"Sent new message {new_event_id}")
+
+            if new_event_id:
+                # Update pagination to track new message
+                if reacted_event_id in self.pagination.paginations:
+                    old_pagination = self.pagination.paginations.pop(reacted_event_id)
+                    self.pagination.paginations[new_event_id] = {
+                        'room_id': old_pagination['room_id'],
+                        'user_id': old_pagination['user_id'],
+                        'current_page': new_page,
+                        'total_pages': old_pagination['total_pages'],
+                        'callback': old_pagination['callback'],
+                        'reaction_event_ids': []
+                    }
+
+                # Add fresh reactions
+                await asyncio.sleep(0.1)
+                await client.room_send(
+                    room_id=room.room_id,
+                    message_type="m.reaction",
+                    content={"m.relates_to": {"rel_type": "m.annotation", "event_id": new_event_id, "key": "⬅️"}}
+                )
+                await client.room_send(
+                    room_id=room.room_id,
+                    message_type="m.reaction",
+                    content={"m.relates_to": {"rel_type": "m.annotation", "event_id": new_event_id, "key": "➡️"}}
+                )
+                logger.info(f"Added fresh reactions to {new_event_id}")
+
+        except Exception as e:
+            logger.error(f"Error handling reaction: {e}", exc_info=True)
+
     async def show_help(self, room: MatrixRoom, client: AsyncClient):
         """Show help message."""
+        discogs_info = ""
+        if self.discogs:
+            discogs_info = f"\n\n**Discogs Integration:**\nUse `{self.config.command_prefix}discogs help` (dg help) for Discogs commands"
+
         help_text = f"""
 FMatrix Bot - Last.fm Stats & Leaderboards
 
@@ -239,6 +425,8 @@ Done! ✅
 `{self.config.command_prefix}fm track The Beatles - Hey Jude` - Get Hey Jude info
 `{self.config.command_prefix}fm loved` - Show your loved tracks
 `{self.config.command_prefix}fm love Black Sabbath - Iron Man` - Love Iron Man
+
+**GitHub:** [Source Code](https://github.com/zerw0/fmatrix){discogs_info}
         """
         await self.send_message(room, help_text, client)
 
@@ -1453,7 +1641,7 @@ The token expires in 10 minutes.
 
     async def send_message(self, room: MatrixRoom, message: str, client: AsyncClient):
         """Send a message to the room."""
-        await client.room_send(
+        response = await client.room_send(
             room_id=room.room_id,
             message_type="m.room.message",
             content={
@@ -1463,6 +1651,82 @@ The token expires in 10 minutes.
                 "formatted_body": self._markdown_to_html(message)
             }
         )
+        return response.event_id if hasattr(response, 'event_id') else None
+
+    async def send_paginated_message(self, room: MatrixRoom, message: str, client: AsyncClient,
+                                     user_id: str, current_page: int, total_pages: int,
+                                     callback: Callable) -> Optional[str]:
+        """Send a message with pagination support."""
+        event_id = await self.send_message(room, message, client)
+        logger.info(f"Sent message with event_id: {event_id}")
+
+        if event_id and total_pages > 1:
+            logger.info(f"Registering pagination for event {event_id}: page {current_page}/{total_pages}, user {user_id}")
+            # Register pagination
+            self.pagination.register(event_id, room.room_id, user_id, current_page, total_pages, callback)
+            logger.info(f"Pagination registered. Active paginations: {list(self.pagination.paginations.keys())}")
+
+            # Add initial reaction arrows so users know they can click
+            import asyncio
+            await asyncio.sleep(0.1)  # Small delay to ensure message is processed
+
+            logger.info(f"Adding ⬅️ reaction to {event_id}")
+            await client.room_send(
+                room_id=room.room_id,
+                message_type="m.reaction",
+                content={
+                    "m.relates_to": {
+                        "rel_type": "m.annotation",
+                        "event_id": event_id,
+                        "key": "⬅️"
+                    }
+                }
+            )
+
+            logger.info(f"Adding ➡️ reaction to {event_id}")
+            await client.room_send(
+                room_id=room.room_id,
+                message_type="m.reaction",
+                content={
+                    "m.relates_to": {
+                        "rel_type": "m.annotation",
+                        "event_id": event_id,
+                        "key": "➡️"
+                    }
+                }
+            )
+            logger.info(f"Initial reactions added to {event_id}")
+        else:
+            logger.info(f"Not adding pagination - event_id: {event_id}, total_pages: {total_pages}")
+
+        return event_id
+
+    async def edit_message(self, room: MatrixRoom, event_id: str, new_message: str, client: AsyncClient):
+        """Edit an existing message and keep user reactions."""
+        logger.info(f"Editing message {event_id}")
+
+        # Simply edit the message - Matrix will preserve user reactions
+        await client.room_send(
+            room_id=room.room_id,
+            message_type="m.room.message",
+            content={
+                "msgtype": "m.text",
+                "body": f"* {new_message}",
+                "format": "org.matrix.custom.html",
+                "formatted_body": f"* {self._markdown_to_html(new_message)}",
+                "m.new_content": {
+                    "msgtype": "m.text",
+                    "body": new_message,
+                    "format": "org.matrix.custom.html",
+                    "formatted_body": self._markdown_to_html(new_message)
+                },
+                "m.relates_to": {
+                    "rel_type": "m.replace",
+                    "event_id": event_id
+                }
+            }
+        )
+        logger.info(f"Message edited successfully")
 
     async def send_image_message(self, room: MatrixRoom, image_url: str, artist_name: str, client: AsyncClient):
         """Download image from Last.fm and upload to Matrix, then send."""
@@ -1536,6 +1800,8 @@ The token expires in 10 minutes.
     @staticmethod
     def _markdown_to_html(text: str) -> str:
         """Convert basic markdown to HTML."""
+        # Links - must be before bold/italic to avoid conflicts
+        text = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', text)
         # Bold
         text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
         # Italic
@@ -1545,3 +1811,480 @@ The token expires in 10 minutes.
         # Newlines
         text = text.replace('\n', '<br/>')
         return text
+
+    # Discogs Commands
+
+    async def show_discogs_help(self, room: MatrixRoom, client: AsyncClient):
+        """Show Discogs help message."""
+        help_text = f"""
+**Discogs Commands:**
+
+`{self.config.command_prefix}discogs link <username>` (dg link) - Link Discogs account
+`{self.config.command_prefix}discogs stats [username]` (dg stats) - Show collection/wantlist stats
+`{self.config.command_prefix}discogs collection [username] [page]` (dg collection) - Show collection items
+`{self.config.command_prefix}discogs wantlist [username] [page]` (dg wantlist) - Show wantlist items
+`{self.config.command_prefix}discogs search <query>` (dg search) - Search Discogs database
+`{self.config.command_prefix}discogs artist <name>` (dg artist) - Search for artist info
+`{self.config.command_prefix}discogs release <name>` (dg release) - Search for release info
+`{self.config.command_prefix}discogs help` (dg help) - Show this help
+
+**Examples:**
+`{self.config.command_prefix}dg link MyDiscogsUsername`
+`{self.config.command_prefix}dg stats`
+`{self.config.command_prefix}dg collection`
+`{self.config.command_prefix}dg search Pink Floyd`
+        """
+        await self.send_message(room, help_text, client)
+
+    async def link_discogs_user(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Link a Matrix user to a Discogs account."""
+        if not args:
+            await self.send_message(room, f"Usage: `{self.config.command_prefix}discogs link <username>`", client)
+            return
+
+        discogs_username = args[0]
+
+        # Verify the user exists on Discogs
+        user_profile = await self.discogs.get_user_profile(discogs_username)
+        if not user_profile:
+            await self.send_message(
+                room,
+                f"❌ Could not find Discogs user '{discogs_username}'. Please check the username.",
+                client
+            )
+            return
+
+        # Link in database
+        success = await self.db.link_discogs_user(sender, discogs_username)
+        if success:
+            await self.send_message(
+                room,
+                f"✅ Successfully linked your Matrix account to Discogs user **{discogs_username}**!",
+                client
+            )
+        else:
+            await self.send_message(
+                room,
+                "❌ Failed to link Discogs account. Please try again.",
+                client
+            )
+
+    async def show_discogs_stats(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Show Discogs collection and wantlist stats."""
+        # Get target user
+        if args and args[0]:
+            discogs_username = args[0]
+        else:
+            discogs_username = await self.db.get_discogs_username(sender)
+            if not discogs_username:
+                await self.send_message(
+                    room,
+                    f"❌ You haven't linked a Discogs account. Use `{self.config.command_prefix}discogs link <username>`",
+                    client
+                )
+                return
+
+        # Get collection stats
+        collection_stats = await self.discogs.get_user_collection_stats(discogs_username)
+        wantlist_stats = await self.discogs.get_user_wantlist_stats(discogs_username)
+
+        if not collection_stats and not wantlist_stats:
+            await self.send_message(
+                room,
+                f"❌ Could not retrieve stats for Discogs user '{discogs_username}'.",
+                client
+            )
+            return
+
+        collection_count = collection_stats.get('total_items', 0) if collection_stats else 0
+        wantlist_count = wantlist_stats.get('total_wants', 0) if wantlist_stats else 0
+
+        stats_text = f"""
+**Discogs Stats for {discogs_username}**
+
+📀 **Collection**: {collection_count:,} items
+🎯 **Wantlist**: {wantlist_count:,} items
+        """
+
+        await self.send_message(room, stats_text.strip(), client)
+
+    async def show_discogs_collection(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Show user's Discogs collection."""
+        # Get target user
+        if args and args[0] and not args[0].isdigit():
+            discogs_username = args[0]
+            page = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
+        else:
+            discogs_username = await self.db.get_discogs_username(sender)
+            if not discogs_username:
+                await self.send_message(
+                    room,
+                    f"❌ You haven't linked a Discogs account. Use `{self.config.command_prefix}discogs link <username>`",
+                    client
+                )
+                return
+            page = int(args[0]) if args and args[0].isdigit() else 1
+
+        # Create callback for pagination
+        async def get_collection_page(page_num: int) -> str:
+            collection = await self.discogs.get_user_collection(discogs_username, page=page_num, per_page=10)
+
+            if not collection or 'releases' not in collection:
+                return f"❌ Could not retrieve collection for Discogs user '{discogs_username}'."
+
+            releases = collection.get('releases', [])
+            pagination_info = collection.get('pagination', {})
+            total_items = pagination_info.get('items', 0)
+            total_pages = pagination_info.get('pages', 0)
+
+            if not releases:
+                return f"📀 **{discogs_username}'s Collection** (Page {page_num}/{total_pages})\n\nNo items found."
+
+            # Sort releases alphabetically by artist name
+            releases_sorted = sorted(releases, key=lambda r: r.get('basic_information', {}).get('artists', [{}])[0].get('name', 'Unknown').lower())
+
+            # Format emoji mapping
+            format_emoji = {
+                'Vinyl': '💿',
+                'LP': '💿',
+                'CD': '💽',
+                'Cassette': '📼',
+                'Box Set': '📦',
+                'File': '💾',
+                'All Media': '🎵'
+            }
+
+            # Format collection items
+            items_text = []
+            for release in releases_sorted[:10]:
+                basic_info = release.get('basic_information', {})
+                release_id = basic_info.get('id', '')
+                title = basic_info.get('title', 'Unknown')
+                artists = basic_info.get('artists', [])
+                artist_name = artists[0].get('name', 'Unknown') if artists else 'Unknown'
+                year = basic_info.get('year', 'N/A')
+                # Replace 0 year with N/A
+                year = year if year and year != 0 else 'N/A'
+                formats = basic_info.get('formats', [])
+                format_name = formats[0].get('name', 'Unknown') if formats else 'Unknown'
+
+                # Get emoji for format
+                format_display = format_emoji.get(format_name, '🎵')
+
+                # Create Discogs URL
+                discogs_url = f"https://www.discogs.com/release/{release_id}" if release_id else None
+
+                # Format the line
+                if discogs_url:
+                    items_text.append(f"[{format_display} {artist_name} - {title}]({discogs_url}) ({year})")
+                else:
+                    items_text.append(f"{format_display} {artist_name} - {title} ({year})")
+
+            collection_text = f"""
+📀 **{discogs_username}'s Collection** (Page {page_num}/{total_pages})
+Total: {total_items:,} items
+
+{chr(10).join(items_text)}
+            """
+            return collection_text.strip()
+
+        # Get initial collection to check total pages
+        collection = await self.discogs.get_user_collection(discogs_username, page=page, per_page=10)
+
+        if not collection or 'releases' not in collection:
+            await self.send_message(
+                room,
+                f"❌ Could not retrieve collection for Discogs user '{discogs_username}'.",
+                client
+            )
+            return
+
+        total_pages = collection.get('pagination', {}).get('pages', 1)
+
+        # Generate initial content
+        initial_content = await get_collection_page(page)
+
+        # Send with pagination if multiple pages
+        await self.send_paginated_message(
+            room, initial_content, client,
+            user_id=sender,
+            current_page=page,
+            total_pages=total_pages,
+            callback=get_collection_page
+        )
+
+    async def show_discogs_wantlist(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Show user's Discogs wantlist."""
+        # Get target user
+        if args and args[0] and not args[0].isdigit():
+            discogs_username = args[0]
+            page = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
+        else:
+            discogs_username = await self.db.get_discogs_username(sender)
+            if not discogs_username:
+                await self.send_message(
+                    room,
+                    f"❌ You haven't linked a Discogs account. Use `{self.config.command_prefix}discogs link <username>`",
+                    client
+                )
+                return
+            page = int(args[0]) if args and args[0].isdigit() else 1
+
+        # Create callback for pagination
+        async def get_wantlist_page(page_num: int) -> str:
+            wantlist = await self.discogs.get_user_wantlist(discogs_username, page=page_num, per_page=10)
+
+            if not wantlist or 'wants' not in wantlist:
+                return f"❌ Could not retrieve wantlist for Discogs user '{discogs_username}'."
+
+            wants = wantlist.get('wants', [])
+            pagination_info = wantlist.get('pagination', {})
+            total_items = pagination_info.get('items', 0)
+            total_pages = pagination_info.get('pages', 0)
+
+            if not wants:
+                return f"🎯 **{discogs_username}'s Wantlist** (Page {page_num}/{total_pages})\n\nNo items found."
+
+            # Sort wants alphabetically by artist name
+            wants_sorted = sorted(wants, key=lambda w: w.get('basic_information', {}).get('artists', [{}])[0].get('name', 'Unknown').lower())
+
+            # Format emoji mapping
+            format_emoji = {
+                'Vinyl': '💿',
+                'LP': '💿',
+                'CD': '💽',
+                'Cassette': '📼',
+                'Box Set': '📦',
+                'File': '💾',
+                'All Media': '🎵'
+            }
+
+            # Format wantlist items
+            items_text = []
+            for want in wants_sorted[:10]:
+                basic_info = want.get('basic_information', {})
+                release_id = basic_info.get('id', '')
+                title = basic_info.get('title', 'Unknown')
+                artists = basic_info.get('artists', [])
+                artist_name = artists[0].get('name', 'Unknown') if artists else 'Unknown'
+                year = basic_info.get('year', 'N/A')
+                # Replace 0 year with N/A
+                year = year if year and year != 0 else 'N/A'
+                formats = basic_info.get('formats', [])
+                format_name = formats[0].get('name', 'Unknown') if formats else 'Unknown'
+
+                # Get emoji for format
+                format_display = format_emoji.get(format_name, '🎵')
+
+                # Create Discogs URL
+                discogs_url = f"https://www.discogs.com/release/{release_id}" if release_id else None
+
+                # Format the line
+                if discogs_url:
+                    items_text.append(f"[{format_display} {artist_name} - {title}]({discogs_url}) ({year})")
+                else:
+                    items_text.append(f"{format_display} {artist_name} - {title} ({year})")
+
+            wantlist_text = f"""
+🎯 **{discogs_username}'s Wantlist** (Page {page_num}/{total_pages})
+Total: {total_items:,} items
+
+{chr(10).join(items_text)}
+            """
+            return wantlist_text.strip()
+
+        # Get initial wantlist to check total pages
+        wantlist = await self.discogs.get_user_wantlist(discogs_username, page=page, per_page=10)
+
+        if not wantlist or 'wants' not in wantlist:
+            await self.send_message(
+                room,
+                f"❌ Could not retrieve wantlist for Discogs user '{discogs_username}'.",
+                client
+            )
+            return
+
+        total_pages = wantlist.get('pagination', {}).get('pages', 1)
+
+        # Generate initial content
+        initial_content = await get_wantlist_page(page)
+
+        # Send with pagination if multiple pages
+        await self.send_paginated_message(
+            room, initial_content, client,
+            user_id=sender,
+            current_page=page,
+            total_pages=total_pages,
+            callback=get_wantlist_page
+        )
+
+    async def search_discogs(self, room: MatrixRoom, args: list, client: AsyncClient):
+        """Search Discogs database."""
+        if not args:
+            await self.send_message(
+                room,
+                f"Usage: `{self.config.command_prefix}discogs search <query>`",
+                client
+            )
+            return
+
+        query = ' '.join(args)
+        results = await self.discogs.search(query, per_page=5)
+
+        if not results or 'results' not in results:
+            await self.send_message(
+                room,
+                f"❌ No results found for '{query}'.",
+                client
+            )
+            return
+
+        items = results.get('results', [])
+        if not items:
+            await self.send_message(
+                room,
+                f"❌ No results found for '{query}'.",
+                client
+            )
+            return
+
+        # Format search results
+        items_text = []
+        for item in items[:5]:
+            title = item.get('title', 'Unknown')
+            item_type = item.get('type', 'Unknown')
+            year = item.get('year', '')
+            year_str = f" ({year})" if year else ""
+            resource_url = item.get('resource_url', '')
+
+            # Extract ID from resource_url and create Discogs link
+            if resource_url:
+                # Resource URLs look like: https://api.discogs.com/releases/123 or https://api.discogs.com/artists/456
+                discogs_id = resource_url.rstrip('/').split('/')[-1]
+                discogs_link = f"https://www.discogs.com/{item_type.lower()}s/{discogs_id}" if item_type.lower() in ['release', 'artist', 'master'] else resource_url.replace('api.discogs.com', 'www.discogs.com')
+                items_text.append(f"• [{item_type}] [{title}]({discogs_link}){year_str}")
+            else:
+                items_text.append(f"• [{item_type}] {title}{year_str}")
+
+        search_text = f"""
+🔍 **Discogs Search Results** for '{query}'
+
+{chr(10).join(items_text)}
+        """
+
+        await self.send_message(room, search_text.strip(), client)
+
+    async def show_discogs_artist(self, room: MatrixRoom, args: list, client: AsyncClient):
+        """Show Discogs artist info."""
+        if not args:
+            await self.send_message(
+                room,
+                f"Usage: `{self.config.command_prefix}discogs artist <name>`",
+                client
+            )
+            return
+
+        artist_name = ' '.join(args)
+        artists = await self.discogs.search_artist(artist_name, limit=1)
+
+        if not artists:
+            await self.send_message(
+                room,
+                f"❌ No artist found for '{artist_name}'.",
+                client
+            )
+            return
+
+        artist_id = artists[0].get('id')
+        artist_info = await self.discogs.get_artist(artist_id)
+
+        if not artist_info:
+            await self.send_message(
+                room,
+                f"❌ Could not retrieve info for artist '{artist_name}'.",
+                client
+            )
+            return
+
+        name = artist_info.get('name', 'Unknown')
+        real_name = artist_info.get('realname', '')
+        profile = artist_info.get('profile', 'No profile available.')
+        artist_id = artist_info.get('id', '')
+
+        # Truncate profile if too long
+        if len(profile) > 500:
+            profile = profile[:500] + "..."
+
+        # Create Discogs link
+        discogs_link = f"https://www.discogs.com/artist/{artist_id}" if artist_id else ""
+        link_text = f" - [{discogs_link}]({discogs_link})" if discogs_link else ""
+
+        artist_text = f"""
+🎵 **[{name}]({discogs_link})**{f" | {real_name}" if real_name else ""}
+
+{profile}
+        """
+
+        await self.send_message(room, artist_text.strip(), client)
+
+    async def show_discogs_release(self, room: MatrixRoom, args: list, client: AsyncClient):
+        """Show Discogs release info."""
+        if not args:
+            await self.send_message(
+                room,
+                f"Usage: `{self.config.command_prefix}discogs release <name>`",
+                client
+            )
+            return
+
+        release_name = ' '.join(args)
+        releases = await self.discogs.search_release(release_name, limit=1)
+
+        if not releases:
+            await self.send_message(
+                room,
+                f"❌ No release found for '{release_name}'.",
+                client
+            )
+            return
+
+        release_id = releases[0].get('id')
+        release_info = await self.discogs.get_release(release_id)
+
+        if not release_info:
+            await self.send_message(
+                room,
+                f"❌ Could not retrieve info for release '{release_name}'.",
+                client
+            )
+            return
+
+        title = release_info.get('title', 'Unknown')
+        artists = release_info.get('artists', [])
+        artist_name = artists[0].get('name', 'Unknown') if artists else 'Unknown'
+        year = release_info.get('year', 'N/A')
+        genres = ', '.join(release_info.get('genres', []))
+        styles = ', '.join(release_info.get('styles', []))
+
+        # Create Discogs link
+        discogs_link = f"https://www.discogs.com/release/{release_id}"
+
+        tracklist = release_info.get('tracklist', [])
+        tracks_text = []
+        for track in tracklist[:10]:  # Show first 10 tracks
+            position = track.get('position', '')
+            track_title = track.get('title', 'Unknown')
+            duration = track.get('duration', '')
+            tracks_text.append(f"{position}. {track_title} {f'({duration})' if duration else ''}")
+
+        release_text = f"""
+💿 **[{artist_name} - {title}]({discogs_link})** ({year})
+
+Genres: {genres if genres else 'N/A'}
+Styles: {styles if styles else 'N/A'}
+
+**Tracklist:**
+{chr(10).join(tracks_text) if tracks_text else 'No tracklist available'}
+        """
+
+        await self.send_message(room, release_text.strip(), client)

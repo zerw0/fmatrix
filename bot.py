@@ -6,12 +6,13 @@ import logging
 import os
 from typing import Optional
 
-from nio import AsyncClient, RoomMessage, MatrixRoom, InviteEvent
+from nio import AsyncClient, RoomMessage, MatrixRoom, InviteEvent, ReactionEvent
 from nio.responses import LoginResponse, SyncResponse
 
 from config import Config
 from database import Database
 from lastfm_client import LastfmClient
+from discogs_client import DiscogsClient
 from commands import CommandHandler
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,9 @@ class FMatrixBot:
             self.config.lastfm_api_key,
             self.config.lastfm_api_secret
         )
+        self.discogs = None
+        if self.config.discogs_user_token:
+            self.discogs = DiscogsClient(self.config.discogs_user_token)
         self.command_handler: Optional[CommandHandler] = None
 
     async def init_db(self):
@@ -118,12 +122,35 @@ class FMatrixBot:
         except Exception as e:
             logger.error(f"Error handling message: {e}", exc_info=True)
 
+    async def reaction_callback(self, room: MatrixRoom, event: ReactionEvent):
+        """Handle reaction events for pagination."""
+        try:
+            logger.info(f"Reaction callback triggered - Sender: {event.sender}")
+            logger.info(f"Reacted to event: {event.reacts_to}, Key: {event.key}")
+
+            # Ignore reactions from the bot itself
+            if event.sender == self.config.matrix_user_id:
+                logger.info("Ignoring reaction from bot itself")
+                return
+
+            # Handle the reaction
+            await self.command_handler.handle_reaction(
+                room=room,
+                event=event,
+                sender=event.sender,
+                client=self.client
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling reaction: {e}", exc_info=True)
+
     async def run(self):
         """Run the bot."""
         await self.setup_client()
         self.command_handler = CommandHandler(
             self.db,
             self.lastfm,
+            self.discogs,
             self.config
         )
 
@@ -155,6 +182,12 @@ class FMatrixBot:
         self.client.add_event_callback(
             self.invite_callback,
             InviteEvent
+        )
+
+        # Add callback for reactions (pagination)
+        self.client.add_event_callback(
+            self.reaction_callback,
+            ReactionEvent
         )
 
         logger.info("Bot ready - processing new messages only")
