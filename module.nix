@@ -81,7 +81,8 @@ in
         LoadCredential = "secrets.env:${cfg.secretsFile}";
         RestartSec = 1;
         Restart = "on-failure";
-        RuntimeDirectory = "fmatrix";
+        RuntimeDirectory = cfg.stateDir;
+        WorkingDirectory = "/var/lib/${cfg.stateDir}";
         RuntimeDirectoryMode = "0700";
         DynamicUser = true;
         StateDirectory = cfg.stateDir;

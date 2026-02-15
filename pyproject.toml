@@ -38,4 +38,4 @@ dependencies = [
 fmatrix = "main:run"
 
 [tool.setuptools]
-py-modules = ["main", "bot", "config", "commands", "database", "lastfm_client"]
+py-modules = ["main", "bot", "config", "commands", "database", "lastfm_client", "discogs_client"]
