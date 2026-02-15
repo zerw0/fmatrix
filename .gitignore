@@ -29,6 +29,7 @@ wheels/
 venv/
 ENV/
 env/
+.direnv
 
 # IDE
 .vscode/
@@ -48,6 +49,7 @@ fmatrix.log
 # OS
 .DS_Store
 Thumbs.db
+result
 
 # Data directory
 data/
