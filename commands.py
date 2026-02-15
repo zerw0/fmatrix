@@ -404,6 +404,7 @@ FMatrix Bot - Last.fm Stats & Leaderboards
 `{self.config.command_prefix}fm whoknowstrack <track>` (wkt) - Who in this room knows this track
 `{self.config.command_prefix}fm whoknowsalbum <album>` (wka) - Who in this room knows this album
 `{self.config.command_prefix}fm chart [size] [period] [flags]` (c) - Generate album collage
+  Flags: `--skipempty/-s` (skip empty albums), `--notitles/-n` (hide album titles)
 `{self.config.command_prefix}fm leaderboard [stat]` (lb) - Show room leaderboard
 
 `{self.config.command_prefix}fm help` (?) - Show this help
