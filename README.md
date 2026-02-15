@@ -1,6 +1,6 @@
 # FMatrix
 
-A Matrix bot that shows your Last.fm stats directly in your rooms. Check your top artists, see what you've been listening to, and compete with friends on leaderboards.
+A Matrix bot that shows your Last.fm stats and Discogs collection directly in your rooms. Check your top artists, see what you've been listening to, browse your vinyl collection, and compete with friends on leaderboards.
 
 ## Quick Start
 
@@ -10,7 +10,12 @@ Here's what you need:
    - Go to https://www.last.fm/api/account/create
    - Make an app and copy your API Key and Secret
 
-**2. Matrix bot account**
+**2. Discogs User Token (Optional)**
+   - Go to https://www.discogs.com/settings/developers
+   - Generate a new token for personal use
+   - Copy the token for your `.env` file
+
+**3. Matrix bot account**
    - Register a bot account on your homeserver (matrix.org works)
    - You'll need the full user ID like `@fmatrix:matrix.org` and password
 
@@ -30,6 +35,7 @@ MATRIX_USER_ID=@yourbot:matrix.org
 MATRIX_PASSWORD=your_password
 LASTFM_API_KEY=get_this_from_lastfm
 LASTFM_API_SECRET=get_this_too
+DISCOGS_USER_TOKEN=optional_discogs_token
 ```
 
 **4. Run it**
@@ -75,6 +81,16 @@ All commands start with `!fm` (or use shortcuts). Here's what works:
 - `!fm link username` or `!l username` - Connect your Last.fm
 - `!fm help` or `!?` - Show all commands
 
+**Discogs (if configured):**
+- `!dg link username` - Connect your Discogs account
+- `!dg stats` - Show your collection and wantlist stats
+- `!dg collection [page]` - Browse your collection (10 items per page)
+- `!dg wantlist [page]` - Browse your wantlist (10 items per page)
+- `!dg search query` - Search Discogs database
+- `!dg artist name` - Get artist info
+- `!dg release name` - Get release info
+- `!dg help` - Show Discogs help
+
 **Time periods:** (add to any stat command)
 ```
 7d, 7day, 7days     → Last week
@@ -101,12 +117,14 @@ main.py              Starts everything
 bot.py              Matrix client stuff
 commands.py         All the command logic
 lastfm_client.py    Talks to Last.fm's API
+discogs_client.py   Talks to Discogs API
 database.py         SQLite for caching and user links
 config.py           Loads your .env settings
 ```
 
 The bot stores two things in SQLite:
 - Which Matrix users are linked to which Last.fm accounts
+- Which Matrix users are linked to which Discogs accounts (if configured)
 - Cached stats so we don't hammer Last.fm's API
 
 ## Config
@@ -119,6 +137,7 @@ MATRIX_USER_ID=@bot:matrix.org              # Bot account
 MATRIX_PASSWORD=hunter2                      # Bot password
 LASTFM_API_KEY=abc123                        # From Last.fm
 LASTFM_API_SECRET=def456                     # Also from Last.fm
+DISCOGS_USER_TOKEN=xyz789                    # Optional: From Discogs
 COMMAND_PREFIX=!                             # Change if you want
 LOG_LEVEL=INFO                               # DEBUG for more logs
 DATA_DIR=/data                               # Where to save the database
@@ -130,6 +149,8 @@ DATA_DIR=/data                               # Where to save the database
 - Artist search tries to show images when available (falls back to album art)
 - Leaderboards only work with people in the same room
 - All Last.fm data is public anyway, so no privacy concerns
+- Discogs integration is optional - the bot works fine without it
+- Discogs commands require a user token (free from Discogs settings)
 
 ## Credits
 

@@ -30,6 +30,9 @@ class Config:
         self.lastfm_api_key = os.getenv('LASTFM_API_KEY')
         self.lastfm_api_secret = os.getenv('LASTFM_API_SECRET')
 
+        # Discogs Configuration
+        self.discogs_user_token = os.getenv('DISCOGS_USER_TOKEN')
+
         # Bot Configuration
         self.command_prefix = os.getenv('COMMAND_PREFIX', '!')
         self.log_level = os.getenv('LOG_LEVEL', 'INFO')
