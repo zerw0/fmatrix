@@ -3,6 +3,7 @@
 FMatrix - Matrix Bot for Last.fm Stats and Leaderboards
 """
 
+import argparse
 import asyncio
 import logging
 import sys
@@ -39,12 +40,25 @@ async def health_check_loop():
         await asyncio.sleep(30)
 
 
-async def main():
+def _parse_args():
+    parser = argparse.ArgumentParser(description="FMatrix - Matrix Bot for Last.fm Stats")
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Path to .env-format config file (values override environment variables)",
+    )
+    return parser.parse_args()
+
+
+async def main(config_path=None):
     """Main entry point for the bot."""
     logger.info("Starting FMatrix bot...")
 
     # Create bot instance
-    bot = FMatrixBot()
+    bot = FMatrixBot(config_path=config_path)
 
     # Start health check loop in background
     asyncio.create_task(health_check_loop())
@@ -62,5 +76,11 @@ async def main():
         sys.exit(1)
 
 
+def run():
+    """Entry point for the fmatrix console script."""
+    args = _parse_args()
+    asyncio.run(main(config_path=args.config))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    run()
