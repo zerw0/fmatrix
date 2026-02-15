@@ -4,9 +4,13 @@ Main Matrix Bot Implementation
 
 import logging
 import os
+import ssl
 from typing import Optional
 
-from nio import AsyncClient, RoomMessage, MatrixRoom, InviteEvent, ReactionEvent
+import aiohttp
+import certifi
+
+from nio import AsyncClient, AsyncClientConfig, RoomMessage, MatrixRoom, InviteEvent, ReactionEvent
 from nio.responses import LoginResponse, SyncResponse
 
 from config import Config
@@ -38,16 +42,40 @@ class FMatrixBot:
         """Initialize the database."""
         self.db = Database(self.config.db_path)
         await self.db.init()
+        self.lastfm.set_cache_db(self.db)
         logger.info("Database initialized")
 
     async def setup_client(self):
         """Set up the Matrix client."""
+        client_config = AsyncClientConfig(
+            request_timeout=120,
+            max_timeouts=10,
+        )
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
         self.client = AsyncClient(
             self.config.matrix_homeserver,
-            self.config.matrix_user_id
+            self.config.matrix_user_id,
+            config=client_config,
+            ssl=ssl_context,
         )
 
         logger.info(f"Matrix client initialized for {self.config.matrix_user_id}")
+
+    async def check_homeserver(self):
+        """Probe the homeserver to surface connectivity errors early."""
+        url = f"{self.config.matrix_homeserver}/_matrix/client/versions"
+        timeout = aiohttp.ClientTimeout(total=10)
+        try:
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, ssl=ssl_context) as resp:
+                    logger.info(
+                        "Homeserver probe OK: %s (status %s)",
+                        url,
+                        resp.status,
+                    )
+        except Exception as e:
+            logger.error("Homeserver probe failed: %s (%s)", url, e)
 
     async def login(self):
         """Log in to the Matrix server."""
@@ -147,6 +175,7 @@ class FMatrixBot:
     async def run(self):
         """Run the bot."""
         await self.setup_client()
+        await self.check_homeserver()
         self.command_handler = CommandHandler(
             self.db,
             self.lastfm,
@@ -170,7 +199,7 @@ class FMatrixBot:
         """Sync loop that handles room invites automatically."""
         # First sync: establish sync token without processing events
         logger.info("Initial sync - establishing connection...")
-        initial_sync = await self.client.sync(timeout=1)
+        initial_sync = await self.client.sync(timeout=1000)
 
         # NOW set up event handlers after we have the sync token
         self.client.add_event_callback(

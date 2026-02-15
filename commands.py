@@ -1173,7 +1173,7 @@ The token expires in 10 minutes.
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-                top_artists = await self.lastfm.get_top_artists(lastfm_user, period='overall', limit=100)
+                top_artists = await self.lastfm.get_all_top_artists(lastfm_user, period='overall')
                 for artist in top_artists:
                     if artist.get('name', '').lower() == artist_name_clean.lower():
                         room_listeners.append({
@@ -1255,7 +1255,7 @@ The token expires in 10 minutes.
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-                top_tracks = await self.lastfm.get_top_tracks(lastfm_user, period='overall', limit=1000)
+                top_tracks = await self.lastfm.get_all_top_tracks(lastfm_user, period='overall')
                 for track in top_tracks:
                     track_name = track.get('name', '').lower()
                     if track_query in track_name or track_name in track_query:
@@ -1331,7 +1331,7 @@ The token expires in 10 minutes.
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-                top_albums = await self.lastfm.get_top_albums(lastfm_user, period='overall', limit=1000)
+                top_albums = await self.lastfm.get_all_top_albums(lastfm_user, period='overall')
                 for album in top_albums:
                     album_name = album.get('name', '').lower()
                     if album_query in album_name or album_name in album_query:
@@ -1642,17 +1642,34 @@ The token expires in 10 minutes.
 
     async def send_message(self, room: MatrixRoom, message: str, client: AsyncClient):
         """Send a message to the room."""
-        response = await client.room_send(
-            room_id=room.room_id,
-            message_type="m.room.message",
-            content={
-                "msgtype": "m.text",
-                "body": message,
-                "format": "org.matrix.custom.html",
-                "formatted_body": self._markdown_to_html(message)
-            }
+        try:
+            response = await client.room_send(
+                room_id=room.room_id,
+                message_type="m.room.message",
+                content={
+                    "msgtype": "m.text",
+                    "body": message,
+                    "format": "org.matrix.custom.html",
+                    "formatted_body": self._markdown_to_html(message)
+                }
+            )
+        except Exception as e:
+            logger.error("Exception sending message to %s: %s", room.room_id, e, exc_info=True)
+            return None
+
+        if hasattr(response, 'event_id'):
+            return response.event_id
+
+        error_message = getattr(response, 'message', None) or getattr(response, 'error', None)
+        status_code = getattr(response, 'status_code', None)
+        logger.warning(
+            "Failed to send message to %s. status=%s error=%s response=%s",
+            room.room_id,
+            status_code,
+            error_message,
+            response,
         )
-        return response.event_id if hasattr(response, 'event_id') else None
+        return None
 
     async def send_paginated_message(self, room: MatrixRoom, message: str, client: AsyncClient,
                                      user_id: str, current_page: int, total_pages: int,
