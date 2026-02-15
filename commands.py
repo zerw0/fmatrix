@@ -1168,19 +1168,37 @@ The token expires in 10 minutes.
         room_members = list(room.users.keys())
         user_mapping = await self.db.get_all_users_in_room(room.room_id, room_members)
 
-        # Fetch top listeners in this room for this artist
+        # Fetch each user's playcount for this specific artist (with caching)
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-                top_artists = await self.lastfm.get_top_artists(lastfm_user, period='overall', limit=100)
-                for artist in top_artists:
-                    if artist.get('name', '').lower() == artist_name_clean.lower():
-                        room_listeners.append({
-                            'user': lastfm_user,
-                            'plays': int(artist.get('playcount', 0))
-                        })
-                        break
-            except:
+                # Check cache first
+                cached_playcount = await self.db.get_cached_playcount(
+                    lastfm_user, 'artist', artist_name_clean, max_age_hours=1
+                )
+                
+                if cached_playcount is not None:
+                    playcount = cached_playcount
+                    logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
+                else:
+                    # Get artist info with user's playcount from API
+                    artist_data = await self.lastfm.get_artist_info(artist_name_clean, username=lastfm_user)
+                    if artist_data and 'stats' in artist_data:
+                        user_playcount = artist_data['stats'].get('userplaycount', '0')
+                        playcount = int(user_playcount) if user_playcount else 0
+                        # Cache the result
+                        await self.db.cache_playcount(lastfm_user, 'artist', artist_name_clean, playcount)
+                        logger.debug(f"Cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
+                    else:
+                        playcount = 0
+                
+                if playcount > 0:
+                    room_listeners.append({
+                        'user': lastfm_user,
+                        'plays': playcount
+                    })
+            except Exception as e:
+                logger.error(f"Error fetching artist playcount for {lastfm_user}: {e}")
                 pass
 
         room_listeners.sort(key=lambda x: x['plays'], reverse=True)
@@ -1240,7 +1258,18 @@ The token expires in 10 minutes.
             await self.send_message(room, f"Usage: `{self.config.command_prefix}fm whoknowstrack <track name>`", client)
             return
 
-        track_query = ' '.join(args).lower()
+        track_query = ' '.join(args)
+
+        # Search for the track to get the canonical name
+        tracks = await self.lastfm.search_track(track_query, limit=1)
+        if not tracks:
+            await self.send_message(room, f"❌ No tracks found matching '{track_query}'", client)
+            return
+
+        # Get the top result
+        top_track = tracks[0]
+        track_name = top_track.get('name', track_query)
+        artist_name = self._extract_artist_name(top_track.get('artist', {}))
 
         # Get room members and their Last.fm accounts
         room_members = list(room.users.keys())
@@ -1250,27 +1279,42 @@ The token expires in 10 minutes.
             await self.send_message(room, "❌ No users in this room have linked their Last.fm accounts", client)
             return
 
-        # Fetch top tracks for each user and filter for matches
+        # Fetch each user's playcount for this specific track (with caching)
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-                top_tracks = await self.lastfm.get_top_tracks(lastfm_user, period='overall', limit=1000)
-                for track in top_tracks:
-                    track_name = track.get('name', '').lower()
-                    if track_query in track_name or track_name in track_query:
-                        artist = self._extract_artist_name(track.get('artist', {}))
-                        room_listeners.append({
-                            'user': lastfm_user,
-                            'track': track.get('name', 'Unknown'),
-                            'artist': artist,
-                            'plays': int(track.get('playcount', 0))
-                        })
-                        break
-            except:
+                # Check cache first
+                cached_playcount = await self.db.get_cached_playcount(
+                    lastfm_user, 'track', track_name, artist_name=artist_name, max_age_hours=1
+                )
+                
+                if cached_playcount is not None:
+                    playcount = cached_playcount
+                    logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
+                else:
+                    # Get track info with user's playcount from API
+                    track_data = await self.lastfm.get_track_info(artist_name, track_name, username=lastfm_user)
+                    if track_data and 'userplaycount' in track_data:
+                        playcount = int(track_data['userplaycount']) if track_data['userplaycount'] else 0
+                        # Cache the result
+                        await self.db.cache_playcount(lastfm_user, 'track', track_name, playcount, artist_name=artist_name)
+                        logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
+                    else:
+                        playcount = 0
+                
+                if playcount > 0:
+                    room_listeners.append({
+                        'user': lastfm_user,
+                        'track': track_name,
+                        'artist': artist_name,
+                        'plays': playcount
+                    })
+            except Exception as e:
+                logger.error(f"Error fetching track playcount for {lastfm_user}: {e}")
                 pass
 
         if not room_listeners:
-            await self.send_message(room, f"❌ No one in this room has listened to '{' '.join(args)}'", client)
+            await self.send_message(room, f"❌ No one in this room has listened to '{track_name}' by {artist_name}", client)
             return
 
         # Sort by plays
@@ -1316,7 +1360,18 @@ The token expires in 10 minutes.
             await self.send_message(room, f"Usage: `{self.config.command_prefix}fm whoknowsalbum <album name>`", client)
             return
 
-        album_query = ' '.join(args).lower()
+        album_query = ' '.join(args)
+
+        # Search for the album to get the canonical name
+        albums = await self.lastfm.search_album(album_query, limit=1)
+        if not albums:
+            await self.send_message(room, f"❌ No albums found matching '{album_query}'", client)
+            return
+
+        # Get the top result
+        top_album = albums[0]
+        album_name = top_album.get('name', album_query)
+        artist_name = self._extract_artist_name(top_album.get('artist', {})) if 'artist' in top_album else top_album.get('artist', 'Unknown')
 
         # Get room members and their Last.fm accounts
         room_members = list(room.users.keys())
@@ -1326,27 +1381,42 @@ The token expires in 10 minutes.
             await self.send_message(room, "❌ No users in this room have linked their Last.fm accounts", client)
             return
 
-        # Fetch top albums for each user and filter for matches
+        # Fetch each user's playcount for this specific album (with caching)
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-                top_albums = await self.lastfm.get_top_albums(lastfm_user, period='overall', limit=1000)
-                for album in top_albums:
-                    album_name = album.get('name', '').lower()
-                    if album_query in album_name or album_name in album_query:
-                        artist = self._extract_artist_name(album.get('artist', {}))
-                        room_listeners.append({
-                            'user': lastfm_user,
-                            'album': album.get('name', 'Unknown'),
-                            'artist': artist,
-                            'plays': int(album.get('playcount', 0))
-                        })
-                        break
-            except:
+                # Check cache first
+                cached_playcount = await self.db.get_cached_playcount(
+                    lastfm_user, 'album', album_name, artist_name=artist_name, max_age_hours=1
+                )
+                
+                if cached_playcount is not None:
+                    playcount = cached_playcount
+                    logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
+                else:
+                    # Get album info with user's playcount from API
+                    album_data = await self.lastfm.get_album_info(artist_name, album_name, username=lastfm_user)
+                    if album_data and 'userplaycount' in album_data:
+                        playcount = int(album_data['userplaycount']) if album_data['userplaycount'] else 0
+                        # Cache the result
+                        await self.db.cache_playcount(lastfm_user, 'album', album_name, playcount, artist_name=artist_name)
+                        logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
+                    else:
+                        playcount = 0
+                
+                if playcount > 0:
+                    room_listeners.append({
+                        'user': lastfm_user,
+                        'album': album_name,
+                        'artist': artist_name,
+                        'plays': playcount
+                    })
+            except Exception as e:
+                logger.error(f"Error fetching album playcount for {lastfm_user}: {e}")
                 pass
 
         if not room_listeners:
-            await self.send_message(room, f"❌ No one in this room has listened to '{' '.join(args)}'", client)
+            await self.send_message(room, f"❌ No one in this room has listened to '{album_name}' by {artist_name}", client)
             return
 
         # Sort by plays
