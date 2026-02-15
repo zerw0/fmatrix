@@ -2,6 +2,7 @@
 Main Matrix Bot Implementation
 """
 
+import asyncio
 import logging
 import os
 import ssl
@@ -42,7 +43,6 @@ class FMatrixBot:
         """Initialize the database."""
         self.db = Database(self.config.db_path)
         await self.db.init()
-        self.lastfm.set_cache_db(self.db)
         logger.info("Database initialized")
 
     async def setup_client(self):
