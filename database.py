@@ -3,7 +3,7 @@ Database management for user Last.fm mappings and cached data
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 import aiosqlite
 
@@ -60,13 +60,6 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS lastfm_cache (
-                cache_key TEXT PRIMARY KEY,
-                response_json TEXT NOT NULL,
-                expires_at TIMESTAMP NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
             CREATE TABLE IF NOT EXISTS room_settings (
                 room_id TEXT PRIMARY KEY,
                 setting_name TEXT NOT NULL,
@@ -80,13 +73,8 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_discogs_mappings_username
                 ON discogs_mappings(discogs_username);
 
-<<<<<<< HEAD
-            CREATE INDEX IF NOT EXISTS idx_lastfm_cache_expires
-                ON lastfm_cache(expires_at);
-=======
             CREATE INDEX IF NOT EXISTS idx_playcount_cache_lookup
                 ON playcount_cache(item_type, item_name, artist_name, cached_at);
->>>>>>> temp-cache-updates
         """)
 
         await self.db.commit()
@@ -112,24 +100,6 @@ class Database:
                 )
                 await self.db.commit()
                 logger.info("Migration completed: lastfm_session_key column added")
-
-            # Ensure lastfm_cache table exists for older databases
-            cursor = await self.db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='lastfm_cache'"
-            )
-            if not await cursor.fetchone():
-                logger.info("Creating lastfm_cache table")
-                await self.db.executescript("""
-                    CREATE TABLE IF NOT EXISTS lastfm_cache (
-                        cache_key TEXT PRIMARY KEY,
-                        response_json TEXT NOT NULL,
-                        expires_at TIMESTAMP NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_lastfm_cache_expires
-                        ON lastfm_cache(expires_at);
-                """)
-                await self.db.commit()
         except Exception as e:
             logger.error(f"Error running migrations: {e}", exc_info=True)
 
@@ -258,54 +228,7 @@ class Database:
         )
         await self.db.commit()
 
-<<<<<<< HEAD
-    async def get_lastfm_cache(self, cache_key: str) -> Optional[str]:
-        """Get cached Last.fm response if not expired."""
-        cursor = await self.db.execute(
-            "SELECT response_json, expires_at FROM lastfm_cache WHERE cache_key = ?",
-            (cache_key,)
-        )
-        row = await cursor.fetchone()
-        if not row:
-            return None
-
-        response_json, expires_at_raw = row
-        try:
-            expires_at = datetime.fromisoformat(expires_at_raw)
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-        except (TypeError, ValueError):
-            await self.db.execute(
-                "DELETE FROM lastfm_cache WHERE cache_key = ?",
-                (cache_key,)
-            )
-            await self.db.commit()
-            return None
-
-        if datetime.now(timezone.utc) >= expires_at:
-            await self.db.execute(
-                "DELETE FROM lastfm_cache WHERE cache_key = ?",
-                (cache_key,)
-            )
-            await self.db.commit()
-            return None
-
-        return response_json
-
-    async def set_lastfm_cache(self, cache_key: str, response_json: str, ttl_seconds: int):
-        """Cache a Last.fm response with TTL in seconds."""
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
-        await self.db.execute(
-            """
-            INSERT OR REPLACE INTO lastfm_cache
-            (cache_key, response_json, expires_at)
-            VALUES (?, ?, ?)
-            """,
-            (cache_key, response_json, expires_at.isoformat())
-        )
-        await self.db.commit()
-=======
-    async def cache_playcount(self, lastfm_username: str, item_type: str, item_name: str,
+    async def cache_playcount(self, lastfm_username: str, item_type: str, item_name: str, 
                               playcount: int, artist_name: str = None):
         """Cache a playcount for an artist/track/album."""
         await self.db.execute(
@@ -324,12 +247,12 @@ class Database:
         cursor = await self.db.execute(
             """
             SELECT playcount, cached_at FROM playcount_cache
-            WHERE lastfm_username = ?
-              AND item_type = ?
+            WHERE lastfm_username = ? 
+              AND item_type = ? 
               AND item_name = ?
               AND (artist_name = ? OR (artist_name IS NULL AND ? IS NULL))
             """,
-            (lastfm_username, item_type, item_name.lower(),
+            (lastfm_username, item_type, item_name.lower(), 
              artist_name.lower() if artist_name else None,
              artist_name)
         )
@@ -355,7 +278,6 @@ class Database:
         )
         await self.db.commit()
 
->>>>>>> temp-cache-updates
     async def store_auth_token(self, matrix_user_id: str, auth_token: str) -> bool:
         """Store a pending auth token for a user."""
         try:

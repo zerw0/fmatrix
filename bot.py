@@ -215,11 +215,7 @@ class FMatrixBot:
         """Sync loop that handles room invites automatically."""
         # First sync: establish sync token without processing events
         logger.info("Initial sync - establishing connection...")
-<<<<<<< HEAD
-        initial_sync = await self.client.sync(timeout=1000)
-=======
         initial_sync = await self.client.sync(timeout=30000)
->>>>>>> temp-cache-updates
 
         # NOW set up event handlers after we have the sync token
         self.client.add_event_callback(

@@ -404,7 +404,6 @@ FMatrix Bot - Last.fm Stats & Leaderboards
 `{self.config.command_prefix}fm whoknowstrack <track>` (wkt) - Who in this room knows this track
 `{self.config.command_prefix}fm whoknowsalbum <album>` (wka) - Who in this room knows this album
 `{self.config.command_prefix}fm chart [size] [period] [flags]` (c) - Generate album collage
-  Flags: `--skipempty/-s` (skip empty albums), `--notitles/-n` (hide album titles)
 `{self.config.command_prefix}fm leaderboard [stat]` (lb) - Show room leaderboard
 
 `{self.config.command_prefix}fm help` (?) - Show this help
@@ -1173,22 +1172,11 @@ The token expires in 10 minutes.
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-<<<<<<< HEAD
-                top_artists = await self.lastfm.get_all_top_artists(lastfm_user, period='overall')
-                for artist in top_artists:
-                    if artist.get('name', '').lower() == artist_name_clean.lower():
-                        room_listeners.append({
-                            'user': lastfm_user,
-                            'plays': int(artist.get('playcount', 0))
-                        })
-                        break
-            except:
-=======
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'artist', artist_name_clean, max_age_hours=1
                 )
-
+                
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
@@ -1203,7 +1191,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
                     else:
                         playcount = 0
-
+                
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
@@ -1211,7 +1199,6 @@ The token expires in 10 minutes.
                     })
             except Exception as e:
                 logger.error(f"Error fetching artist playcount for {lastfm_user}: {e}")
->>>>>>> temp-cache-updates
                 pass
 
         room_listeners.sort(key=lambda x: x['plays'], reverse=True)
@@ -1296,26 +1283,11 @@ The token expires in 10 minutes.
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-<<<<<<< HEAD
-                top_tracks = await self.lastfm.get_all_top_tracks(lastfm_user, period='overall')
-                for track in top_tracks:
-                    track_name = track.get('name', '').lower()
-                    if track_query in track_name or track_name in track_query:
-                        artist = self._extract_artist_name(track.get('artist', {}))
-                        room_listeners.append({
-                            'user': lastfm_user,
-                            'track': track.get('name', 'Unknown'),
-                            'artist': artist,
-                            'plays': int(track.get('playcount', 0))
-                        })
-                        break
-            except:
-=======
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'track', track_name, artist_name=artist_name, max_age_hours=1
                 )
-
+                
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
@@ -1329,7 +1301,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
                     else:
                         playcount = 0
-
+                
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
@@ -1339,7 +1311,6 @@ The token expires in 10 minutes.
                     })
             except Exception as e:
                 logger.error(f"Error fetching track playcount for {lastfm_user}: {e}")
->>>>>>> temp-cache-updates
                 pass
 
         if not room_listeners:
@@ -1414,26 +1385,11 @@ The token expires in 10 minutes.
         room_listeners = []
         for matrix_user, lastfm_user in user_mapping.items():
             try:
-<<<<<<< HEAD
-                top_albums = await self.lastfm.get_all_top_albums(lastfm_user, period='overall')
-                for album in top_albums:
-                    album_name = album.get('name', '').lower()
-                    if album_query in album_name or album_name in album_query:
-                        artist = self._extract_artist_name(album.get('artist', {}))
-                        room_listeners.append({
-                            'user': lastfm_user,
-                            'album': album.get('name', 'Unknown'),
-                            'artist': artist,
-                            'plays': int(album.get('playcount', 0))
-                        })
-                        break
-            except:
-=======
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'album', album_name, artist_name=artist_name, max_age_hours=1
                 )
-
+                
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
@@ -1447,7 +1403,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
                     else:
                         playcount = 0
-
+                
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
@@ -1457,7 +1413,6 @@ The token expires in 10 minutes.
                     })
             except Exception as e:
                 logger.error(f"Error fetching album playcount for {lastfm_user}: {e}")
->>>>>>> temp-cache-updates
                 pass
 
         if not room_listeners:
@@ -1756,34 +1711,17 @@ The token expires in 10 minutes.
 
     async def send_message(self, room: MatrixRoom, message: str, client: AsyncClient):
         """Send a message to the room."""
-        try:
-            response = await client.room_send(
-                room_id=room.room_id,
-                message_type="m.room.message",
-                content={
-                    "msgtype": "m.text",
-                    "body": message,
-                    "format": "org.matrix.custom.html",
-                    "formatted_body": self._markdown_to_html(message)
-                }
-            )
-        except Exception as e:
-            logger.error("Exception sending message to %s: %s", room.room_id, e, exc_info=True)
-            return None
-
-        if hasattr(response, 'event_id'):
-            return response.event_id
-
-        error_message = getattr(response, 'message', None) or getattr(response, 'error', None)
-        status_code = getattr(response, 'status_code', None)
-        logger.warning(
-            "Failed to send message to %s. status=%s error=%s response=%s",
-            room.room_id,
-            status_code,
-            error_message,
-            response,
+        response = await client.room_send(
+            room_id=room.room_id,
+            message_type="m.room.message",
+            content={
+                "msgtype": "m.text",
+                "body": message,
+                "format": "org.matrix.custom.html",
+                "formatted_body": self._markdown_to_html(message)
+            }
         )
-        return None
+        return response.event_id if hasattr(response, 'event_id') else None
 
     async def send_paginated_message(self, room: MatrixRoom, message: str, client: AsyncClient,
                                      user_id: str, current_page: int, total_pages: int,

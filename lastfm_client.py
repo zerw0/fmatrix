@@ -2,12 +2,8 @@
 Last.fm API client
 """
 
-import json
 import logging
-import ssl
-import time
 import aiohttp
-import certifi
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -22,41 +18,6 @@ class LastfmClient:
         self.api_key = api_key
         self.api_secret = api_secret
         self.session: Optional[aiohttp.ClientSession] = None
-        self._cache: Dict[str, tuple[float, Dict]] = {}
-        self._cache_ttls = {
-            'user.gettopartists': 600,
-            'user.gettoptracks': 600,
-            'user.gettopalbums': 600,
-            'user.getinfo': 300,
-            'user.getrecenttracks': 30,
-            'artist.search': 300,
-            'track.search': 300,
-            'album.search': 300,
-            'artist.getinfo': 3600,
-            'artist.gettopalbums': 3600,
-            'track.getinfo': 3600,
-            'user.getlovedtracks': 300,
-        }
-        self._default_cache_ttl = 120
-        self.cache_db = None
-
-    def set_cache_db(self, cache_db):
-        """Set database for persistent caching."""
-        self.cache_db = cache_db
-
-    def _cache_key(self, params: Dict) -> str:
-        parts = []
-        for key, value in sorted(params.items()):
-            if key in {'api_key', 'format'}:
-                continue
-            parts.append(f"{key}={value}")
-        return "|".join(parts)
-
-    def _cache_ttl(self, params: Dict) -> int:
-        method = params.get('method')
-        if method in self._cache_ttls:
-            return self._cache_ttls[method]
-        return self._default_cache_ttl
 
     async def get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
@@ -74,50 +35,12 @@ class LastfmClient:
         params['api_key'] = self.api_key
         params['format'] = 'json'
 
-        ttl = self._cache_ttl(params)
-        cache_key = self._cache_key(params)
-        if ttl > 0:
-            cached = self._cache.get(cache_key)
-            if cached:
-                cached_at, cached_data = cached
-                if time.monotonic() - cached_at < ttl:
-                    return cached_data
-                self._cache.pop(cache_key, None)
-
-            if self.cache_db:
-                try:
-                    cached_json = await self.cache_db.get_lastfm_cache(cache_key)
-                    if cached_json:
-                        cached_data = json.loads(cached_json)
-                        self._cache[cache_key] = (time.monotonic(), cached_data)
-                        return cached_data
-                except Exception as e:
-                    logger.warning(f"Last.fm cache read failed: {e}")
-
         session = await self.get_session()
 
         try:
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            async with session.get(
-                BASE_URL,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=10),
-                ssl=ssl_context,
-            ) as resp:
+            async with session.get(BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    if ttl > 0:
-                        self._cache[cache_key] = (time.monotonic(), data)
-                        if self.cache_db:
-                            try:
-                                await self.cache_db.set_lastfm_cache(
-                                    cache_key,
-                                    json.dumps(data),
-                                    ttl,
-                                )
-                            except Exception as e:
-                                logger.warning(f"Last.fm cache write failed: {e}")
-                    return data
+                    return await resp.json()
                 else:
                     logger.error(f"Last.fm API error: {resp.status}")
                     return None
@@ -154,59 +77,6 @@ class LastfmClient:
             return artists
         return []
 
-    async def get_all_top_artists(
-        self,
-        username: str,
-        period: str = 'overall',
-        page_size: int = 200,
-        max_pages: int | None = None,
-    ) -> List[Dict]:
-        """Get all of a user's top artists by paging the Last.fm API."""
-        period = period.replace('7days', '7day')
-        all_artists: List[Dict] = []
-        page = 1
-        total_pages = None
-
-        while True:
-            if max_pages is not None and page > max_pages:
-                break
-
-            data = await self._request({
-                'method': 'user.gettopartists',
-                'user': username,
-                'period': period,
-                'limit': page_size,
-                'page': page,
-            })
-
-            if not data or 'topartists' not in data:
-                break
-
-            topartists = data['topartists']
-            artists = topartists.get('artist', [])
-            if isinstance(artists, dict):
-                artists = [artists]
-
-            all_artists.extend(artists)
-
-            if total_pages is None:
-                attr = topartists.get('@attr', {})
-                total_pages_raw = attr.get('totalPages') or attr.get('totalpages')
-                try:
-                    total_pages = int(total_pages_raw)
-                except (TypeError, ValueError):
-                    total_pages = None
-
-            if total_pages is not None and page >= total_pages:
-                break
-
-            if not artists or len(artists) < page_size:
-                break
-
-            page += 1
-
-        return all_artists
-
     async def get_top_tracks(self, username: str, period: str = 'overall', limit: int = 10) -> List[Dict]:
         """Get user's top tracks."""
         # Normalize period: 7days -> 7day (Last.fm API compatibility)
@@ -225,59 +95,6 @@ class LastfmClient:
             return tracks
         return []
 
-    async def get_all_top_tracks(
-        self,
-        username: str,
-        period: str = 'overall',
-        page_size: int = 200,
-        max_pages: int | None = None,
-    ) -> List[Dict]:
-        """Get all of a user's top tracks by paging the Last.fm API."""
-        period = period.replace('7days', '7day')
-        all_tracks: List[Dict] = []
-        page = 1
-        total_pages = None
-
-        while True:
-            if max_pages is not None and page > max_pages:
-                break
-
-            data = await self._request({
-                'method': 'user.gettoptracks',
-                'user': username,
-                'period': period,
-                'limit': page_size,
-                'page': page,
-            })
-
-            if not data or 'toptracks' not in data:
-                break
-
-            toptracks = data['toptracks']
-            tracks = toptracks.get('track', [])
-            if isinstance(tracks, dict):
-                tracks = [tracks]
-
-            all_tracks.extend(tracks)
-
-            if total_pages is None:
-                attr = toptracks.get('@attr', {})
-                total_pages_raw = attr.get('totalPages') or attr.get('totalpages')
-                try:
-                    total_pages = int(total_pages_raw)
-                except (TypeError, ValueError):
-                    total_pages = None
-
-            if total_pages is not None and page >= total_pages:
-                break
-
-            if not tracks or len(tracks) < page_size:
-                break
-
-            page += 1
-
-        return all_tracks
-
     async def get_top_albums(self, username: str, period: str = 'overall', limit: int = 10) -> List[Dict]:
         """Get user's top albums."""
         # Normalize period: 7days -> 7day (Last.fm API compatibility)
@@ -295,59 +112,6 @@ class LastfmClient:
                 return [albums]
             return albums
         return []
-
-    async def get_all_top_albums(
-        self,
-        username: str,
-        period: str = 'overall',
-        page_size: int = 200,
-        max_pages: int | None = None,
-    ) -> List[Dict]:
-        """Get all of a user's top albums by paging the Last.fm API."""
-        period = period.replace('7days', '7day')
-        all_albums: List[Dict] = []
-        page = 1
-        total_pages = None
-
-        while True:
-            if max_pages is not None and page > max_pages:
-                break
-
-            data = await self._request({
-                'method': 'user.gettopalbums',
-                'user': username,
-                'period': period,
-                'limit': page_size,
-                'page': page,
-            })
-
-            if not data or 'topalbums' not in data:
-                break
-
-            topalbums = data['topalbums']
-            albums = topalbums.get('album', [])
-            if isinstance(albums, dict):
-                albums = [albums]
-
-            all_albums.extend(albums)
-
-            if total_pages is None:
-                attr = topalbums.get('@attr', {})
-                total_pages_raw = attr.get('totalPages') or attr.get('totalpages')
-                try:
-                    total_pages = int(total_pages_raw)
-                except (TypeError, ValueError):
-                    total_pages = None
-
-            if total_pages is not None and page >= total_pages:
-                break
-
-            if not albums or len(albums) < page_size:
-                break
-
-            page += 1
-
-        return all_albums
 
     async def get_recent_tracks(self, username: str, limit: int = 10) -> List[Dict]:
         """Get user's recent tracks."""
@@ -428,7 +192,7 @@ class LastfmClient:
 
     async def get_artist_info(self, artist_name: str, username: str = None) -> Optional[Dict]:
         """Get detailed info about an artist including image and genre.
-
+        
         If username is provided, includes that user's playcount for the artist.
         """
         params = {
@@ -437,7 +201,7 @@ class LastfmClient:
         }
         if username:
             params['username'] = username
-
+            
         data = await self._request(params)
 
         if data and 'artist' in data:
@@ -461,7 +225,7 @@ class LastfmClient:
 
     async def get_album_info(self, artist_name: str, album_name: str, username: str = None) -> Optional[Dict]:
         """Get detailed info about an album.
-
+        
         If username is provided, includes that user's playcount for the album.
         """
         params = {
@@ -471,7 +235,7 @@ class LastfmClient:
         }
         if username:
             params['username'] = username
-
+            
         data = await self._request(params)
 
         if data and 'album' in data:
@@ -548,13 +312,7 @@ class LastfmClient:
 
         session = await self.get_session()
         try:
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            async with session.post(
-                BASE_URL,
-                data=params,
-                timeout=aiohttp.ClientTimeout(total=10),
-                ssl=ssl_context,
-            ) as resp:
+            async with session.post(BASE_URL, data=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 logger.info(f"Last.fm love track response status: {resp.status}")
                 if resp.status == 200:
                     data = await resp.json()
@@ -615,13 +373,7 @@ class LastfmClient:
 
         session = await self.get_session()
         try:
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            async with session.post(
-                BASE_URL,
-                data=params,
-                timeout=aiohttp.ClientTimeout(total=10),
-                ssl=ssl_context,
-            ) as resp:
+            async with session.post(BASE_URL, data=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 logger.info(f"Last.fm unlove track response status: {resp.status}")
                 if resp.status == 200:
                     data = await resp.json()
