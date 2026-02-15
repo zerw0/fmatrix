@@ -426,12 +426,19 @@ class LastfmClient:
             return albums
         return []
 
-    async def get_artist_info(self, artist_name: str) -> Optional[Dict]:
-        """Get detailed info about an artist including image and genre."""
-        data = await self._request({
+    async def get_artist_info(self, artist_name: str, username: str = None) -> Optional[Dict]:
+        """Get detailed info about an artist including image and genre.
+        
+        If username is provided, includes that user's playcount for the artist.
+        """
+        params = {
             'method': 'artist.getinfo',
             'artist': artist_name
-        })
+        }
+        if username:
+            params['username'] = username
+            
+        data = await self._request(params)
 
         if data and 'artist' in data:
             return data['artist']
@@ -451,6 +458,26 @@ class LastfmClient:
                 return [albums]
             return albums
         return []
+
+    async def get_album_info(self, artist_name: str, album_name: str, username: str = None) -> Optional[Dict]:
+        """Get detailed info about an album.
+        
+        If username is provided, includes that user's playcount for the album.
+        """
+        params = {
+            'method': 'album.getinfo',
+            'artist': artist_name,
+            'album': album_name
+        }
+        if username:
+            params['username'] = username
+            
+        data = await self._request(params)
+
+        if data and 'album' in data:
+            return data['album']
+        return None
+
     async def get_now_playing(self, username: str) -> Optional[Dict]:
         """Get user's currently playing track."""
         tracks = await self.get_recent_tracks(username, limit=1)

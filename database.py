@@ -44,6 +44,16 @@ class Database:
                 cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS playcount_cache (
+                lastfm_username TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                artist_name TEXT,
+                playcount INTEGER NOT NULL,
+                cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (lastfm_username, item_type, item_name, artist_name)
+            );
+
             CREATE TABLE IF NOT EXISTS auth_tokens (
                 matrix_user_id TEXT PRIMARY KEY,
                 auth_token TEXT NOT NULL,
@@ -70,8 +80,13 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_discogs_mappings_username
                 ON discogs_mappings(discogs_username);
 
+<<<<<<< HEAD
             CREATE INDEX IF NOT EXISTS idx_lastfm_cache_expires
                 ON lastfm_cache(expires_at);
+=======
+            CREATE INDEX IF NOT EXISTS idx_playcount_cache_lookup
+                ON playcount_cache(item_type, item_name, artist_name, cached_at);
+>>>>>>> temp-cache-updates
         """)
 
         await self.db.commit()
@@ -243,6 +258,7 @@ class Database:
         )
         await self.db.commit()
 
+<<<<<<< HEAD
     async def get_lastfm_cache(self, cache_key: str) -> Optional[str]:
         """Get cached Last.fm response if not expired."""
         cursor = await self.db.execute(
@@ -288,6 +304,58 @@ class Database:
             (cache_key, response_json, expires_at.isoformat())
         )
         await self.db.commit()
+=======
+    async def cache_playcount(self, lastfm_username: str, item_type: str, item_name: str, 
+                              playcount: int, artist_name: str = None):
+        """Cache a playcount for an artist/track/album."""
+        await self.db.execute(
+            """
+            INSERT OR REPLACE INTO playcount_cache
+            (lastfm_username, item_type, item_name, artist_name, playcount, cached_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (lastfm_username, item_type, item_name.lower(), artist_name.lower() if artist_name else None, playcount)
+        )
+        await self.db.commit()
+
+    async def get_cached_playcount(self, lastfm_username: str, item_type: str, item_name: str,
+                                   artist_name: str = None, max_age_hours: int = 1) -> Optional[int]:
+        """Get cached playcount if it's fresh enough."""
+        cursor = await self.db.execute(
+            """
+            SELECT playcount, cached_at FROM playcount_cache
+            WHERE lastfm_username = ? 
+              AND item_type = ? 
+              AND item_name = ?
+              AND (artist_name = ? OR (artist_name IS NULL AND ? IS NULL))
+            """,
+            (lastfm_username, item_type, item_name.lower(), 
+             artist_name.lower() if artist_name else None,
+             artist_name)
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        cached_at = datetime.fromisoformat(row[1])
+        if datetime.now() - cached_at > timedelta(hours=max_age_hours):
+            return None
+
+        return row[0]
+
+    async def clear_old_playcount_cache(self, max_age_hours: int = 24):
+        """Clear playcount cache older than max_age_hours."""
+        await self.db.execute(
+            """
+            DELETE FROM playcount_cache
+            WHERE cached_at < datetime('now', '-' || ? || ' hours')
+            """,
+            (max_age_hours,)
+        )
+        await self.db.commit()
+
+>>>>>>> temp-cache-updates
     async def store_auth_token(self, matrix_user_id: str, auth_token: str) -> bool:
         """Store a pending auth token for a user."""
         try:

@@ -191,15 +191,35 @@ class FMatrixBot:
         # Accept any pending invites from before bot started
         await self.accept_pending_invites()
 
+        # Start cache cleanup background task
+        asyncio.create_task(self.cache_cleanup_loop())
+
         logger.info("Starting sync loop...")
         # Use custom sync loop to handle invites
         await self.sync_with_invite_handling()
+
+    async def cache_cleanup_loop(self):
+        """Periodically clean up old cache entries."""
+        while True:
+            try:
+                # Wait 1 hour between cleanups
+                await asyncio.sleep(3600)
+                logger.info("Running cache cleanup...")
+                await self.db.clear_old_cache(max_age_hours=24)
+                await self.db.clear_old_playcount_cache(max_age_hours=24)
+                logger.info("Cache cleanup completed")
+            except Exception as e:
+                logger.error(f"Error during cache cleanup: {e}", exc_info=True)
 
     async def sync_with_invite_handling(self):
         """Sync loop that handles room invites automatically."""
         # First sync: establish sync token without processing events
         logger.info("Initial sync - establishing connection...")
+<<<<<<< HEAD
         initial_sync = await self.client.sync(timeout=1000)
+=======
+        initial_sync = await self.client.sync(timeout=30000)
+>>>>>>> temp-cache-updates
 
         # NOW set up event handlers after we have the sync token
         self.client.add_event_callback(

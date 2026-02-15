@@ -47,6 +47,10 @@ class Config:
             path = Path(os.getenv("CONFIG_FILE"))
         file_config = _load_env_file(path) if path else {}
 
+        # Set SSL_CERT_FILE from config file if present (for SSL connections to work)
+        if "SSL_CERT_FILE" in file_config and file_config["SSL_CERT_FILE"]:
+            os.environ["SSL_CERT_FILE"] = file_config["SSL_CERT_FILE"]
+
         # Matrix Configuration
         self.matrix_homeserver = _get("MATRIX_HOMESERVER", file_config, "https://matrix.org")
         self.matrix_user_id = _get("MATRIX_USER_ID", file_config, "@fmbot:matrix.org")
