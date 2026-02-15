@@ -1,12 +1,16 @@
 version: '3.8'
 
+# Copy .env.example to .env and fill in credentials. Variables are passed into
+# the container via env_file. Alternatively, mount a config file and set
+# CONFIG_FILE=/path/in/container (values in the file override env).
 services:
   fmbot:
     image: ghcr.io/zerw0/fmatrix:latest
     container_name: fmatrix-bot
+    env_file:
+      - .env
     volumes:
       - ./data:/data
-      - ./.env:/app/.env
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
