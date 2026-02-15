@@ -428,7 +428,7 @@ class LastfmClient:
 
     async def get_artist_info(self, artist_name: str, username: str = None) -> Optional[Dict]:
         """Get detailed info about an artist including image and genre.
-        
+
         If username is provided, includes that user's playcount for the artist.
         """
         params = {
@@ -437,7 +437,7 @@ class LastfmClient:
         }
         if username:
             params['username'] = username
-            
+
         data = await self._request(params)
 
         if data and 'artist' in data:
@@ -461,7 +461,7 @@ class LastfmClient:
 
     async def get_album_info(self, artist_name: str, album_name: str, username: str = None) -> Optional[Dict]:
         """Get detailed info about an album.
-        
+
         If username is provided, includes that user's playcount for the album.
         """
         params = {
@@ -471,7 +471,7 @@ class LastfmClient:
         }
         if username:
             params['username'] = username
-            
+
         data = await self._request(params)
 
         if data and 'album' in data:

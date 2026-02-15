@@ -305,7 +305,7 @@ class Database:
         )
         await self.db.commit()
 =======
-    async def cache_playcount(self, lastfm_username: str, item_type: str, item_name: str, 
+    async def cache_playcount(self, lastfm_username: str, item_type: str, item_name: str,
                               playcount: int, artist_name: str = None):
         """Cache a playcount for an artist/track/album."""
         await self.db.execute(
@@ -324,12 +324,12 @@ class Database:
         cursor = await self.db.execute(
             """
             SELECT playcount, cached_at FROM playcount_cache
-            WHERE lastfm_username = ? 
-              AND item_type = ? 
+            WHERE lastfm_username = ?
+              AND item_type = ?
               AND item_name = ?
               AND (artist_name = ? OR (artist_name IS NULL AND ? IS NULL))
             """,
-            (lastfm_username, item_type, item_name.lower(), 
+            (lastfm_username, item_type, item_name.lower(),
              artist_name.lower() if artist_name else None,
              artist_name)
         )

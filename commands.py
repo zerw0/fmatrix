@@ -1188,7 +1188,7 @@ The token expires in 10 minutes.
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'artist', artist_name_clean, max_age_hours=1
                 )
-                
+
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
@@ -1203,7 +1203,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
                     else:
                         playcount = 0
-                
+
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
@@ -1315,7 +1315,7 @@ The token expires in 10 minutes.
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'track', track_name, artist_name=artist_name, max_age_hours=1
                 )
-                
+
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
@@ -1329,7 +1329,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
                     else:
                         playcount = 0
-                
+
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
@@ -1433,7 +1433,7 @@ The token expires in 10 minutes.
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'album', album_name, artist_name=artist_name, max_age_hours=1
                 )
-                
+
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
@@ -1447,7 +1447,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
                     else:
                         playcount = 0
-                
+
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
