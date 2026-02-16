@@ -897,7 +897,33 @@ The token expires in 10 minutes.
         artist_name = self._extract_artist_name(track.get('artist', {}))
         album = track.get('album', {})
         album_name = album.get('text', 'Unknown') if isinstance(album, dict) else album or 'Unknown'
-        play_count = track.get('userplaycount', 'N/A')
+        play_count = track.get('userplaycount')
+        if play_count is None:
+            cached_playcount = await self.db.get_cached_playcount(
+                target_user,
+                'track',
+                name,
+                artist_name=artist_name,
+                max_age_hours=1
+            )
+            if cached_playcount is not None:
+                play_count = cached_playcount
+            else:
+                track_info = await self.lastfm.get_track_info(artist_name, name, username=target_user)
+                if track_info:
+                    user_playcount = track_info.get('userplaycount')
+                    if user_playcount is not None:
+                        play_count = int(user_playcount) if user_playcount else 0
+                        await self.db.cache_playcount(
+                            target_user,
+                            'track',
+                            name,
+                            play_count,
+                            artist_name=artist_name
+                        )
+
+        if play_count is None:
+            play_count = 'N/A'
 
         message = f"🎵 **Now Playing - {target_user}**\n\n"
         message += f"**{name}**\n"
