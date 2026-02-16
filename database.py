@@ -21,6 +21,10 @@ class Database:
         """Initialize the database with required tables."""
         self.db = await aiosqlite.connect(self.db_path)
 
+        await self.db.execute("PRAGMA journal_mode = WAL")
+        await self.db.execute("PRAGMA synchronous = NORMAL")
+        await self.db.execute("PRAGMA temp_store = MEMORY")
+
         # Create tables
         await self.db.executescript("""
             CREATE TABLE IF NOT EXISTS user_mappings (
@@ -100,6 +104,7 @@ class Database:
                 )
                 await self.db.commit()
                 logger.info("Migration completed: lastfm_session_key column added")
+
         except Exception as e:
             logger.error(f"Error running migrations: {e}", exc_info=True)
 
@@ -228,7 +233,7 @@ class Database:
         )
         await self.db.commit()
 
-    async def cache_playcount(self, lastfm_username: str, item_type: str, item_name: str, 
+    async def cache_playcount(self, lastfm_username: str, item_type: str, item_name: str,
                               playcount: int, artist_name: str = None):
         """Cache a playcount for an artist/track/album."""
         await self.db.execute(
@@ -247,12 +252,12 @@ class Database:
         cursor = await self.db.execute(
             """
             SELECT playcount, cached_at FROM playcount_cache
-            WHERE lastfm_username = ? 
-              AND item_type = ? 
+            WHERE lastfm_username = ?
+              AND item_type = ?
               AND item_name = ?
               AND (artist_name = ? OR (artist_name IS NULL AND ? IS NULL))
             """,
-            (lastfm_username, item_type, item_name.lower(), 
+            (lastfm_username, item_type, item_name.lower(),
              artist_name.lower() if artist_name else None,
              artist_name)
         )
@@ -329,6 +334,13 @@ class Database:
             """,
             (max_age_hours,)
         )
+        await self.db.commit()
+
+    async def optimize(self):
+        """Run SQLite maintenance to reduce bloat and improve query planning."""
+        await self.db.execute("PRAGMA optimize")
+        await self.db.execute("ANALYZE")
+        await self.db.execute("VACUUM")
         await self.db.commit()
 
     # Discogs-related methods

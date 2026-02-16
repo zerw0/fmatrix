@@ -4,7 +4,6 @@ Main Matrix Bot Implementation
 
 import asyncio
 import logging
-import os
 import ssl
 from typing import Optional
 
@@ -200,6 +199,7 @@ class FMatrixBot:
 
     async def cache_cleanup_loop(self):
         """Periodically clean up old cache entries."""
+        runs = 0
         while True:
             try:
                 # Wait 1 hour between cleanups
@@ -207,6 +207,10 @@ class FMatrixBot:
                 logger.info("Running cache cleanup...")
                 await self.db.clear_old_cache(max_age_hours=24)
                 await self.db.clear_old_playcount_cache(max_age_hours=24)
+                await self.db.clear_old_auth_tokens(max_age_hours=24)
+                runs += 1
+                if runs % 24 == 0:
+                    await self.db.optimize()
                 logger.info("Cache cleanup completed")
             except Exception as e:
                 logger.error(f"Error during cache cleanup: {e}", exc_info=True)

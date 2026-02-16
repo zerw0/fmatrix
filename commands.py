@@ -3,13 +3,13 @@ Command handler for bot commands
 """
 
 import logging
-import json
 import re
+import time
 import aiohttp
 from difflib import SequenceMatcher
 from io import BytesIO
 from typing import Optional, Dict, Callable, Any
-from nio import AsyncClient, RoomMessage, MatrixRoom
+from nio import AsyncClient, MatrixRoom
 from nio.responses import UploadResponse, UploadError
 from PIL import Image, ImageDraw, ImageFont
 
@@ -139,6 +139,8 @@ class CommandHandler:
         self.discogs = discogs
         self.config = config
         self.pagination = PaginationManager()
+        self._now_playing_cache: Dict[str, Dict[str, Any]] = {}
+        self._now_playing_ttl_seconds = 10
 
     @staticmethod
     def normalize_command(cmd: str) -> str:
@@ -189,6 +191,12 @@ class CommandHandler:
         if not text:
             return ''
         return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+    @staticmethod
+    def _normalize_cache_text(text: str) -> str:
+        if not text:
+            return ''
+        return re.sub(r"\s+", " ", text.strip().lower())
 
     @classmethod
     def _fuzzy_ratio(cls, left: str, right: str) -> float:
@@ -888,6 +896,13 @@ The token expires in 10 minutes.
         if not target_user:
             return
 
+        cached_entry = self._now_playing_cache.get(target_user)
+        if cached_entry:
+            age = time.monotonic() - cached_entry['timestamp']
+            if age < self._now_playing_ttl_seconds:
+                await self.send_message(room, cached_entry['message'], client)
+                return
+
         track = await self.lastfm.get_now_playing(target_user)
         if not track:
             await self.send_message(room, f"❌ Could not fetch now playing track for {target_user}", client)
@@ -897,13 +912,15 @@ The token expires in 10 minutes.
         artist_name = self._extract_artist_name(track.get('artist', {}))
         album = track.get('album', {})
         album_name = album.get('text', 'Unknown') if isinstance(album, dict) else album or 'Unknown'
+        track_cache_key = self._normalize_cache_text(name) or name
+        artist_cache_key = self._normalize_cache_text(artist_name) or artist_name
         play_count = track.get('userplaycount')
         if play_count is None:
             cached_playcount = await self.db.get_cached_playcount(
                 target_user,
                 'track',
-                name,
-                artist_name=artist_name,
+                track_cache_key,
+                artist_name=artist_cache_key,
                 max_age_hours=1
             )
             if cached_playcount is not None:
@@ -917,9 +934,9 @@ The token expires in 10 minutes.
                         await self.db.cache_playcount(
                             target_user,
                             'track',
-                            name,
+                            track_cache_key,
                             play_count,
-                            artist_name=artist_name
+                            artist_name=artist_cache_key
                         )
 
         if play_count is None:
@@ -931,6 +948,10 @@ The token expires in 10 minutes.
         message += f"on {album_name}\n"
         message += f"Plays: {play_count}"
 
+        self._now_playing_cache[target_user] = {
+            'timestamp': time.monotonic(),
+            'message': message
+        }
         await self.send_message(room, message, client)
 
     async def show_track_info(self, room: MatrixRoom, args: list, client: AsyncClient):
@@ -1341,6 +1362,7 @@ The token expires in 10 minutes.
         # Build embed with artist leaderboard
         room_members = list(room.users.keys())
         user_mapping = await self.db.get_all_users_in_room(room.room_id, room_members)
+        artist_cache_key = self._normalize_cache_text(artist_name_clean) or artist_name_clean
 
         # Fetch each user's playcount for this specific artist (with caching)
         room_listeners = []
@@ -1348,7 +1370,7 @@ The token expires in 10 minutes.
             try:
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
-                    lastfm_user, 'artist', artist_name_clean, max_age_hours=1
+                    lastfm_user, 'artist', artist_cache_key, max_age_hours=1
                 )
 
                 if cached_playcount is not None:
@@ -1361,7 +1383,7 @@ The token expires in 10 minutes.
                         user_playcount = artist_data['stats'].get('userplaycount', '0')
                         playcount = int(user_playcount) if user_playcount else 0
                         # Cache the result
-                        await self.db.cache_playcount(lastfm_user, 'artist', artist_name_clean, playcount)
+                        await self.db.cache_playcount(lastfm_user, 'artist', artist_cache_key, playcount)
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
                     else:
                         playcount = 0
@@ -1444,6 +1466,8 @@ The token expires in 10 minutes.
         top_track = self._select_best_lastfm_result(tracks, track_query, 'track') or tracks[0]
         track_name = top_track.get('name', track_query)
         artist_name = self._extract_artist_name(top_track.get('artist', {}))
+        track_cache_key = self._normalize_cache_text(track_name) or track_name
+        artist_cache_key = self._normalize_cache_text(artist_name) or artist_name
 
         # Get room members and their Last.fm accounts
         room_members = list(room.users.keys())
@@ -1459,7 +1483,11 @@ The token expires in 10 minutes.
             try:
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
-                    lastfm_user, 'track', track_name, artist_name=artist_name, max_age_hours=1
+                    lastfm_user,
+                    'track',
+                    track_cache_key,
+                    artist_name=artist_cache_key,
+                    max_age_hours=1
                 )
 
                 if cached_playcount is not None:
@@ -1471,7 +1499,13 @@ The token expires in 10 minutes.
                     if track_data and 'userplaycount' in track_data:
                         playcount = int(track_data['userplaycount']) if track_data['userplaycount'] else 0
                         # Cache the result
-                        await self.db.cache_playcount(lastfm_user, 'track', track_name, playcount, artist_name=artist_name)
+                        await self.db.cache_playcount(
+                            lastfm_user,
+                            'track',
+                            track_cache_key,
+                            playcount,
+                            artist_name=artist_cache_key
+                        )
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
                     else:
                         playcount = 0
@@ -1546,6 +1580,8 @@ The token expires in 10 minutes.
         top_album = self._select_best_lastfm_result(albums, album_query, 'album') or albums[0]
         album_name = top_album.get('name', album_query)
         artist_name = self._extract_artist_name(top_album.get('artist', {})) if 'artist' in top_album else top_album.get('artist', 'Unknown')
+        album_cache_key = self._normalize_cache_text(album_name) or album_name
+        artist_cache_key = self._normalize_cache_text(artist_name) or artist_name
 
         # Get room members and their Last.fm accounts
         room_members = list(room.users.keys())
@@ -1561,7 +1597,11 @@ The token expires in 10 minutes.
             try:
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
-                    lastfm_user, 'album', album_name, artist_name=artist_name, max_age_hours=1
+                    lastfm_user,
+                    'album',
+                    album_cache_key,
+                    artist_name=artist_cache_key,
+                    max_age_hours=1
                 )
 
                 if cached_playcount is not None:
@@ -1573,7 +1613,13 @@ The token expires in 10 minutes.
                     if album_data and 'userplaycount' in album_data:
                         playcount = int(album_data['userplaycount']) if album_data['userplaycount'] else 0
                         # Cache the result
-                        await self.db.cache_playcount(lastfm_user, 'album', album_name, playcount, artist_name=artist_name)
+                        await self.db.cache_playcount(
+                            lastfm_user,
+                            'album',
+                            album_cache_key,
+                            playcount,
+                            artist_name=artist_cache_key
+                        )
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
                     else:
                         playcount = 0
@@ -1693,44 +1739,44 @@ The token expires in 10 minutes.
         tile_size = 300
         album_tiles = []  # List of (image, album_name, artist_name, has_cover)
 
-        async with aiohttp.ClientSession() as session:
-            for album in albums:
-                if len(album_tiles) >= total_albums:
-                    break
+        session = await self.lastfm.get_session()
+        for album in albums:
+            if len(album_tiles) >= total_albums:
+                break
 
-                image_url = None
-                album_name = album.get('name', 'Unknown')
-                artist_name = self._extract_artist_name(album.get('artist', {}))
+            image_url = None
+            album_name = album.get('name', 'Unknown')
+            artist_name = self._extract_artist_name(album.get('artist', {}))
 
-                # Get extralarge image (300x300)
-                album_images = album.get('image', [])
-                if isinstance(album_images, list):
-                    for img in album_images:
-                        if img.get('size') == 'extralarge':
-                            url = img.get('#text', '').strip()
-                            if url and '/noimage' not in url.lower():
-                                image_url = url
-                                break
+            # Get extralarge image (300x300)
+            album_images = album.get('image', [])
+            if isinstance(album_images, list):
+                for img in album_images:
+                    if img.get('size') == 'extralarge':
+                        url = img.get('#text', '').strip()
+                        if url and '/noimage' not in url.lower():
+                            image_url = url
+                            break
 
-                # Download image
-                if image_url:
-                    try:
-                        async with session.get(image_url) as resp:
-                            if resp.status == 200:
-                                image_data = await resp.read()
-                                img = Image.open(BytesIO(image_data))
-                                img = img.resize((tile_size, tile_size), Image.Resampling.LANCZOS)
-                                album_tiles.append((img, album_name, artist_name, True))
-                                continue
-                    except Exception as e:
-                        logger.warning(f"Failed to download album image: {e}")
+            # Download image
+            if image_url:
+                try:
+                    async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 200:
+                            image_data = await resp.read()
+                            img = Image.open(BytesIO(image_data))
+                            img = img.resize((tile_size, tile_size), Image.Resampling.LANCZOS)
+                            album_tiles.append((img, album_name, artist_name, True))
+                            continue
+                except Exception as e:
+                    logger.warning(f"Failed to download album image: {e}")
 
-                # Skip or create placeholder based on flag
-                if skip_empty:
-                    continue
-                else:
-                    placeholder = Image.new('RGB', (tile_size, tile_size), color='#1a1a1a')
-                    album_tiles.append((placeholder, album_name, artist_name, False))
+            # Skip or create placeholder based on flag
+            if skip_empty:
+                continue
+            else:
+                placeholder = Image.new('RGB', (tile_size, tile_size), color='#1a1a1a')
+                album_tiles.append((placeholder, album_name, artist_name, False))
 
         # Pad with placeholders if needed (only if not skipping empty)
         if not skip_empty:
@@ -1902,19 +1948,21 @@ The token expires in 10 minutes.
                                      callback: Callable) -> Optional[str]:
         """Send a message with pagination support."""
         event_id = await self.send_message(room, message, client)
-        logger.info(f"Sent message with event_id: {event_id}")
+        logger.debug(f"Sent message with event_id: {event_id}")
 
         if event_id and total_pages > 1:
-            logger.info(f"Registering pagination for event {event_id}: page {current_page}/{total_pages}, user {user_id}")
+            logger.debug(
+                f"Registering pagination for event {event_id}: page {current_page}/{total_pages}, user {user_id}"
+            )
             # Register pagination
             self.pagination.register(event_id, room.room_id, user_id, current_page, total_pages, callback)
-            logger.info(f"Pagination registered. Active paginations: {list(self.pagination.paginations.keys())}")
+            logger.debug(f"Pagination registered. Active paginations: {list(self.pagination.paginations.keys())}")
 
             # Add initial reaction arrows so users know they can click
             import asyncio
             await asyncio.sleep(0.1)  # Small delay to ensure message is processed
 
-            logger.info(f"Adding ⬅️ reaction to {event_id}")
+            logger.debug(f"Adding ⬅️ reaction to {event_id}")
             await client.room_send(
                 room_id=room.room_id,
                 message_type="m.reaction",
@@ -1927,7 +1975,7 @@ The token expires in 10 minutes.
                 }
             )
 
-            logger.info(f"Adding ➡️ reaction to {event_id}")
+            logger.debug(f"Adding ➡️ reaction to {event_id}")
             await client.room_send(
                 room_id=room.room_id,
                 message_type="m.reaction",
@@ -1939,9 +1987,9 @@ The token expires in 10 minutes.
                     }
                 }
             )
-            logger.info(f"Initial reactions added to {event_id}")
+            logger.debug(f"Initial reactions added to {event_id}")
         else:
-            logger.info(f"Not adding pagination - event_id: {event_id}, total_pages: {total_pages}")
+            logger.debug(f"Not adding pagination - event_id: {event_id}, total_pages: {total_pages}")
 
         return event_id
 
@@ -1976,27 +2024,27 @@ The token expires in 10 minutes.
         """Download image from Last.fm and upload to Matrix, then send."""
         try:
             # Download the image
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Failed to download image: HTTP {resp.status}")
-                        return
+            session = await self.lastfm.get_session()
+            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to download image: HTTP {resp.status}")
+                    return
 
-                    image_data = await resp.read()
-                    content_type = resp.headers.get('Content-Type', 'image/png')
+                image_data = await resp.read()
+                content_type = resp.headers.get('Content-Type', 'image/png')
 
-                    logger.info(f"Downloaded image: {len(image_data)} bytes, Content-Type: {content_type}")
-                    logger.info(f"First 50 bytes: {image_data[:50]}")
+                logger.info(f"Downloaded image: {len(image_data)} bytes, Content-Type: {content_type}")
+                logger.info(f"First 50 bytes: {image_data[:50]}")
 
-                    # Verify we got actual image data
-                    if len(image_data) < 100:
-                        logger.error(f"Image data too small ({len(image_data)} bytes), likely not a valid image")
-                        return
+                # Verify we got actual image data
+                if len(image_data) < 100:
+                    logger.error(f"Image data too small ({len(image_data)} bytes), likely not a valid image")
+                    return
 
-                    # Check for PNG or JPEG magic bytes
-                    if not (image_data[:8] == b'\x89PNG\r\n\x1a\n' or image_data[:2] == b'\xff\xd8'):
-                        logger.error(f"Invalid image format. Magic bytes: {image_data[:10]}")
-                        return
+                # Check for PNG or JPEG magic bytes
+                if not (image_data[:8] == b'\x89PNG\r\n\x1a\n' or image_data[:2] == b'\xff\xd8'):
+                    logger.error(f"Invalid image format. Magic bytes: {image_data[:10]}")
+                    return
 
             # Wrap bytes in BytesIO for nio upload
             image_file = BytesIO(image_data)

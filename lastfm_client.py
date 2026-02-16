@@ -2,7 +2,9 @@
 Last.fm API client
 """
 
+import asyncio
 import logging
+import random
 import aiohttp
 from typing import Dict, List, Optional
 
@@ -36,17 +38,38 @@ class LastfmClient:
         params['format'] = 'json'
 
         session = await self.get_session()
+        timeout = aiohttp.ClientTimeout(total=10)
+        max_attempts = 3
 
-        try:
-            async with session.get(BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
+        for attempt in range(max_attempts):
+            try:
+                async with session.get(BASE_URL, params=params, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+
+                    if resp.status in {429, 500, 502, 503, 504}:
+                        if attempt < max_attempts - 1:
+                            backoff = (0.5 * (2 ** attempt)) + random.uniform(0, 0.2)
+                            logger.warning(
+                                "Last.fm API retryable error %s, retrying in %.2fs",
+                                resp.status,
+                                backoff,
+                            )
+                            await asyncio.sleep(backoff)
+                            continue
+
                     logger.error(f"Last.fm API error: {resp.status}")
                     return None
-        except Exception as e:
-            logger.error(f"Error calling Last.fm API: {e}")
-            return None
+            except Exception as e:
+                if attempt < max_attempts - 1:
+                    backoff = (0.5 * (2 ** attempt)) + random.uniform(0, 0.2)
+                    logger.warning("Last.fm API exception, retrying in %.2fs: %s", backoff, e)
+                    await asyncio.sleep(backoff)
+                    continue
+                logger.error(f"Error calling Last.fm API: {e}")
+                return None
+
+        return None
 
     async def get_user_info(self, username: str) -> Optional[Dict]:
         """Get user info from Last.fm."""
@@ -192,7 +215,7 @@ class LastfmClient:
 
     async def get_artist_info(self, artist_name: str, username: str = None) -> Optional[Dict]:
         """Get detailed info about an artist including image and genre.
-        
+
         If username is provided, includes that user's playcount for the artist.
         """
         params = {
@@ -201,7 +224,7 @@ class LastfmClient:
         }
         if username:
             params['username'] = username
-            
+
         data = await self._request(params)
 
         if data and 'artist' in data:
@@ -225,7 +248,7 @@ class LastfmClient:
 
     async def get_album_info(self, artist_name: str, album_name: str, username: str = None) -> Optional[Dict]:
         """Get detailed info about an album.
-        
+
         If username is provided, includes that user's playcount for the album.
         """
         params = {
@@ -235,7 +258,7 @@ class LastfmClient:
         }
         if username:
             params['username'] = username
-            
+
         data = await self._request(params)
 
         if data and 'album' in data:
