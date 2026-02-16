@@ -62,7 +62,7 @@ class Config:
         self.lastfm_api_secret = _get("LASTFM_API_SECRET", file_config)
 
         # Discogs Configuration
-        self.discogs_user_token = os.getenv('DISCOGS_USER_TOKEN')
+        self.discogs_user_token = _get("DISCOGS_USER_TOKEN", file_config)
 
         # Bot Configuration
         self.command_prefix = _get("COMMAND_PREFIX", file_config, "!")

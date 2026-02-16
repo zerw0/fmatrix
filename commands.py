@@ -6,6 +6,7 @@ import logging
 import json
 import re
 import aiohttp
+from difflib import SequenceMatcher
 from io import BytesIO
 from typing import Optional, Dict, Callable, Any
 from nio import AsyncClient, RoomMessage, MatrixRoom
@@ -182,6 +183,97 @@ class CommandHandler:
             # Last.fm API uses both 'name' and '#text' fields
             return artist.get('name') or artist.get('#text', 'Unknown')
         return str(artist) if artist else 'Unknown'
+
+    @staticmethod
+    def _normalize_fuzzy_text(text: str) -> str:
+        if not text:
+            return ''
+        return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+    @classmethod
+    def _fuzzy_ratio(cls, left: str, right: str) -> float:
+        left_norm = cls._normalize_fuzzy_text(left)
+        right_norm = cls._normalize_fuzzy_text(right)
+        if not left_norm or not right_norm:
+            return 0.0
+        return SequenceMatcher(None, left_norm, right_norm).ratio()
+
+    @staticmethod
+    def _safe_int(value) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _lastfm_candidate_text(self, result: Dict[str, Any], kind: str) -> str:
+        name = result.get('name', '')
+        if kind == 'track':
+            artist_name = self._extract_artist_name(result.get('artist', {}))
+            if artist_name:
+                return f"{artist_name} - {name}".strip()
+        if kind == 'album':
+            artist_name = self._extract_artist_name(result.get('artist', {}))
+            if artist_name:
+                return f"{artist_name} - {name}".strip()
+        return name
+
+    def _get_lastfm_popularity(self, result: Dict[str, Any]) -> int:
+        return max(
+            self._safe_int(result.get('listeners')),
+            self._safe_int(result.get('playcount'))
+        )
+
+    def _select_best_lastfm_result(self, results: list, query: str, kind: str) -> Optional[Dict[str, Any]]:
+        if not results:
+            return None
+
+        max_popularity = max((self._get_lastfm_popularity(r) for r in results), default=0)
+        best_result = None
+        best_score = -1.0
+        best_similarity = -1.0
+
+        for result in results:
+            candidate = self._lastfm_candidate_text(result, kind)
+            similarity = self._fuzzy_ratio(query, candidate)
+            popularity = self._get_lastfm_popularity(result)
+            popularity_score = (popularity / max_popularity) if max_popularity else 0.0
+            score = (similarity * 0.75) + (popularity_score * 0.25)
+
+            if score > best_score or (abs(score - best_score) < 1e-6 and similarity > best_similarity):
+                best_result = result
+                best_score = score
+                best_similarity = similarity
+
+        return best_result
+
+    def _get_discogs_popularity(self, result: Dict[str, Any]) -> int:
+        community = result.get('community')
+        if isinstance(community, dict):
+            return self._safe_int(community.get('have')) + self._safe_int(community.get('want'))
+        return 0
+
+    def _select_best_discogs_result(self, results: list, query: str) -> Optional[Dict[str, Any]]:
+        if not results:
+            return None
+
+        max_popularity = max((self._get_discogs_popularity(r) for r in results), default=0)
+        best_result = None
+        best_score = -1.0
+        best_similarity = -1.0
+
+        for result in results:
+            title = result.get('title', '')
+            similarity = self._fuzzy_ratio(query, title)
+            popularity = self._get_discogs_popularity(result)
+            popularity_score = (popularity / max_popularity) if max_popularity else 0.0
+            score = (similarity * 0.8) + (popularity_score * 0.2)
+
+            if score > best_score or (abs(score - best_score) < 1e-6 and similarity > best_similarity):
+                best_result = result
+                best_score = score
+                best_similarity = similarity
+
+        return best_result
 
     def _get_period_name(self, period: str) -> str:
         """Get display name for a period."""
@@ -839,6 +931,18 @@ The token expires in 10 minutes.
             return
 
         track_info = await self.lastfm.get_track_info(artist_name, track_name)
+        resolved_artist = artist_name
+        resolved_track = track_name
+
+        if not track_info:
+            search_query = f"{artist_name} {track_name}".strip()
+            candidates = await self.lastfm.search_track(search_query, limit=10)
+            best_match = self._select_best_lastfm_result(candidates, search_query, 'track')
+            if best_match:
+                resolved_track = best_match.get('name', track_name)
+                resolved_artist = self._extract_artist_name(best_match.get('artist', {}))
+                track_info = await self.lastfm.get_track_info(resolved_artist, resolved_track)
+
         if not track_info:
             await self.send_message(room, f"❌ Could not find track: {track_name} by {artist_name}", client)
             return
@@ -853,6 +957,8 @@ The token expires in 10 minutes.
         tag_str = ', '.join([t.get('name', '') for t in tag_list[:5]]) if tag_list else 'No tags'
 
         message = f"🎵 **Track Info: {name}**\n\n"
+        if resolved_artist != artist_name or resolved_track != track_name:
+            message += f"Closest match: {resolved_track} by {resolved_artist}\n"
         message += f"**Artist:** {artist_name}\n"
         message += f"**Listeners:** {listeners}\n"
         message += f"**Total Plays:** {plays}\n"
@@ -887,27 +993,46 @@ The token expires in 10 minutes.
     async def love_track_command(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
         """Love a track (requires session key)."""
         logger.info(f"love_track_command called with args: {args}")
-        if len(args) < 2:
+        if len(args) < 1:
             await self.send_message(
                 room,
-                f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track>",
+                f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track> or {self.config.command_prefix}fm love <song>",
                 client
             )
             return
 
-        # Find the dash separator
-        try:
-            dash_idx = args.index('-')
-            artist_name = ' '.join(args[:dash_idx])
-            track_name = ' '.join(args[dash_idx + 1:])
-            logger.info(f"Parsed: artist='{artist_name}', track='{track_name}'")
-        except ValueError:
-            await self.send_message(
-                room,
-                f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track>",
-                client
-            )
-            return
+        artist_name = ''
+        track_name = ''
+        if '-' in args:
+            try:
+                dash_idx = args.index('-')
+                artist_name = ' '.join(args[:dash_idx])
+                track_name = ' '.join(args[dash_idx + 1:])
+                logger.info(f"Parsed: artist='{artist_name}', track='{track_name}'")
+            except ValueError:
+                await self.send_message(
+                    room,
+                    f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track> or {self.config.command_prefix}fm love <song>",
+                    client
+                )
+                return
+        else:
+            query = ' '.join(args).strip()
+            if not query:
+                await self.send_message(
+                    room,
+                    f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track> or {self.config.command_prefix}fm love <song>",
+                    client
+                )
+                return
+            candidates = await self.lastfm.search_track(query, limit=10)
+            best_match = self._select_best_lastfm_result(candidates, query, 'track')
+            if not best_match:
+                await self.send_message(room, f"❌ Could not find a track matching '{query}'", client)
+                return
+            track_name = best_match.get('name', query)
+            artist_name = self._extract_artist_name(best_match.get('artist', {}))
+            logger.info(f"Resolved from query: artist='{artist_name}', track='{track_name}'")
 
         # Get session key
         session_key = await self.db.get_lastfm_session_key(sender)
@@ -923,12 +1048,35 @@ The token expires in 10 minutes.
         # Love the track
         logger.info(f"Calling love_track with artist='{artist_name}', track='{track_name}', session_key=***")
         success = await self.lastfm.love_track(artist_name, track_name, session_key)
+        resolved_artist = artist_name
+        resolved_track = track_name
+
+        if not success:
+            search_query = f"{artist_name} {track_name}".strip()
+            candidates = await self.lastfm.search_track(search_query, limit=10)
+            best_match = self._select_best_lastfm_result(candidates, search_query, 'track')
+            if best_match:
+                resolved_track = best_match.get('name', track_name)
+                resolved_artist = self._extract_artist_name(best_match.get('artist', {}))
+                if resolved_artist != artist_name or resolved_track != track_name:
+                    logger.info(
+                        f"Retrying love_track with closest match artist='{resolved_artist}', track='{resolved_track}'"
+                    )
+                    success = await self.lastfm.love_track(resolved_artist, resolved_track, session_key)
+
         if success:
-            await self.send_message(
-                room,
-                f"❤️ Loved: **{track_name}** by {artist_name}",
-                client
-            )
+            if resolved_artist != artist_name or resolved_track != track_name:
+                await self.send_message(
+                    room,
+                    f"❤️ Loved closest match: **{resolved_track}** by {resolved_artist}",
+                    client
+                )
+            else:
+                await self.send_message(
+                    room,
+                    f"❤️ Loved: **{track_name}** by {artist_name}",
+                    client
+                )
         else:
             await self.send_message(
                 room,
@@ -1056,14 +1204,14 @@ The token expires in 10 minutes.
             return
 
         artist_name = ' '.join(args)
-        artists = await self.lastfm.search_artist(artist_name, limit=1)
+        artists = await self.lastfm.search_artist(artist_name, limit=10)
 
         if not artists:
             await self.send_message(room, f"❌ No artists found matching '{artist_name}'", client)
             return
 
-        # Get the top result
-        top_artist = artists[0]
+        # Pick closest + most popular result
+        top_artist = self._select_best_lastfm_result(artists, artist_name, 'artist') or artists[0]
         artist_name_clean = top_artist.get('name', artist_name)
 
         # Try to get image from search results first (as fallback)
@@ -1176,7 +1324,7 @@ The token expires in 10 minutes.
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'artist', artist_name_clean, max_age_hours=1
                 )
-                
+
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
@@ -1191,7 +1339,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
                     else:
                         playcount = 0
-                
+
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
@@ -1261,13 +1409,13 @@ The token expires in 10 minutes.
         track_query = ' '.join(args)
 
         # Search for the track to get the canonical name
-        tracks = await self.lastfm.search_track(track_query, limit=1)
+        tracks = await self.lastfm.search_track(track_query, limit=10)
         if not tracks:
             await self.send_message(room, f"❌ No tracks found matching '{track_query}'", client)
             return
 
-        # Get the top result
-        top_track = tracks[0]
+        # Pick closest + most popular result
+        top_track = self._select_best_lastfm_result(tracks, track_query, 'track') or tracks[0]
         track_name = top_track.get('name', track_query)
         artist_name = self._extract_artist_name(top_track.get('artist', {}))
 
@@ -1287,7 +1435,7 @@ The token expires in 10 minutes.
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'track', track_name, artist_name=artist_name, max_age_hours=1
                 )
-                
+
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
@@ -1301,7 +1449,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
                     else:
                         playcount = 0
-                
+
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
@@ -1363,13 +1511,13 @@ The token expires in 10 minutes.
         album_query = ' '.join(args)
 
         # Search for the album to get the canonical name
-        albums = await self.lastfm.search_album(album_query, limit=1)
+        albums = await self.lastfm.search_album(album_query, limit=10)
         if not albums:
             await self.send_message(room, f"❌ No albums found matching '{album_query}'", client)
             return
 
-        # Get the top result
-        top_album = albums[0]
+        # Pick closest + most popular result
+        top_album = self._select_best_lastfm_result(albums, album_query, 'album') or albums[0]
         album_name = top_album.get('name', album_query)
         artist_name = self._extract_artist_name(top_album.get('artist', {})) if 'artist' in top_album else top_album.get('artist', 'Unknown')
 
@@ -1389,7 +1537,7 @@ The token expires in 10 minutes.
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user, 'album', album_name, artist_name=artist_name, max_age_hours=1
                 )
-                
+
                 if cached_playcount is not None:
                     playcount = cached_playcount
                     logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
@@ -1403,7 +1551,7 @@ The token expires in 10 minutes.
                         logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
                     else:
                         playcount = 0
-                
+
                 if playcount > 0:
                     room_listeners.append({
                         'user': lastfm_user,
@@ -2255,7 +2403,7 @@ Total: {total_items:,} items
             return
 
         artist_name = ' '.join(args)
-        artists = await self.discogs.search_artist(artist_name, limit=1)
+        artists = await self.discogs.search_artist(artist_name, limit=10)
 
         if not artists:
             await self.send_message(
@@ -2265,7 +2413,8 @@ Total: {total_items:,} items
             )
             return
 
-        artist_id = artists[0].get('id')
+        best_artist = self._select_best_discogs_result(artists, artist_name) or artists[0]
+        artist_id = best_artist.get('id')
         artist_info = await self.discogs.get_artist(artist_id)
 
         if not artist_info:
@@ -2308,7 +2457,7 @@ Total: {total_items:,} items
             return
 
         release_name = ' '.join(args)
-        releases = await self.discogs.search_release(release_name, limit=1)
+        releases = await self.discogs.search_release(release_name, limit=10)
 
         if not releases:
             await self.send_message(
@@ -2318,7 +2467,8 @@ Total: {total_items:,} items
             )
             return
 
-        release_id = releases[0].get('id')
+        best_release = self._select_best_discogs_result(releases, release_name) or releases[0]
+        release_id = best_release.get('id')
         release_info = await self.discogs.get_release(release_id)
 
         if not release_info:
