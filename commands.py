@@ -334,11 +334,11 @@ class CommandHandler:
                 elif self.normalize_command(args[0]) == 'loved':
                     await self.show_loved_tracks(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'whoknows':
-                    await self.who_knows(room, args[1:], client)
+                    await self.who_knows(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'whoknowstrack':
-                    await self.who_knows_track(room, args[1:], client)
+                    await self.who_knows_track(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'whoknowsalbum':
-                    await self.who_knows_album(room, args[1:], client)
+                    await self.who_knows_album(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'chart':
                     await self.generate_chart(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'leaderboard':
@@ -500,9 +500,9 @@ FMatrix Bot - Last.fm Stats & Leaderboards
 `{self.config.command_prefix}fm unlove <artist> - <track>` - Unlove a track (requires session key)
 
 **Room Commands:**
-`{self.config.command_prefix}fm whoknows <artist>` (wk) - Who in this room knows this artist
-`{self.config.command_prefix}fm whoknowstrack <track>` (wkt) - Who in this room knows this track
-`{self.config.command_prefix}fm whoknowsalbum <album>` (wka) - Who in this room knows this album
+`{self.config.command_prefix}fm whoknows [artist]` (wk) - Who in this room knows this artist (defaults to your current artist)
+`{self.config.command_prefix}fm whoknowstrack [track]` (wkt) - Who in this room knows this track (defaults to your current track)
+`{self.config.command_prefix}fm whoknowsalbum [album]` (wka) - Who in this room knows this album (defaults to your current album)
 `{self.config.command_prefix}fm chart [size] [period] [flags]` (c) - Generate album collage
 `{self.config.command_prefix}fm leaderboard [stat]` (lb) - Show room leaderboard
 
@@ -1244,13 +1244,42 @@ The token expires in 10 minutes.
 
         await self.send_message(room, message, client)
 
-    async def who_knows(self, room: MatrixRoom, args: list, client: AsyncClient):
+    async def _get_now_playing_context(self, room: MatrixRoom, sender: str, client: AsyncClient) -> Optional[Dict[str, str]]:
+        target_user = await self._get_target_user(room, sender, client)
+        if not target_user:
+            return None
+
+        track = await self.lastfm.get_now_playing(target_user)
+        if not track:
+            await self.send_message(room, f"❌ Could not fetch now playing track for {target_user}", client)
+            return None
+
+        name = track.get('name', '')
+        artist_name = self._extract_artist_name(track.get('artist', {}))
+        album = track.get('album', {})
+        if isinstance(album, dict):
+            album_name = album.get('#text') or album.get('text') or ''
+        else:
+            album_name = album or ''
+
+        return {
+            'track': name,
+            'artist': artist_name,
+            'album': album_name,
+        }
+
+    async def who_knows(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
         """Show who in the room listens to this artist."""
         if not args:
-            await self.send_message(room, f"Usage: `{self.config.command_prefix}fm whoknows <artist name>`", client)
-            return
-
-        artist_name = ' '.join(args)
+            now_playing = await self._get_now_playing_context(room, sender, client)
+            if not now_playing:
+                return
+            artist_name = now_playing['artist']
+            if not artist_name:
+                await self.send_message(room, "❌ No artist found for your current track", client)
+                return
+        else:
+            artist_name = ' '.join(args)
         artists = await self.lastfm.search_artist(artist_name, limit=10)
 
         if not artists:
@@ -1448,13 +1477,18 @@ The token expires in 10 minutes.
             }
         )
 
-    async def who_knows_track(self, room: MatrixRoom, args: list, client: AsyncClient):
+    async def who_knows_track(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
         """Show who in the room listens to this track."""
         if not args:
-            await self.send_message(room, f"Usage: `{self.config.command_prefix}fm whoknowstrack <track name>`", client)
-            return
-
-        track_query = ' '.join(args)
+            now_playing = await self._get_now_playing_context(room, sender, client)
+            if not now_playing:
+                return
+            track_query = f"{now_playing['artist']} {now_playing['track']}".strip()
+            if not track_query:
+                await self.send_message(room, "❌ No track found for your current listen", client)
+                return
+        else:
+            track_query = ' '.join(args)
 
         # Search for the track to get the canonical name
         tracks = await self.lastfm.search_track(track_query, limit=10)
@@ -1562,24 +1596,33 @@ The token expires in 10 minutes.
             }
         )
 
-    async def who_knows_album(self, room: MatrixRoom, args: list, client: AsyncClient):
+    async def who_knows_album(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
         """Show who in the room listens to this album."""
         if not args:
-            await self.send_message(room, f"Usage: `{self.config.command_prefix}fm whoknowsalbum <album name>`", client)
-            return
+            now_playing = await self._get_now_playing_context(room, sender, client)
+            if not now_playing:
+                return
+            album_name = now_playing['album']
+            artist_name = now_playing['artist']
+            if not album_name:
+                await self.send_message(room, "❌ No album found for your current track", client)
+                return
+            if not artist_name:
+                await self.send_message(room, "❌ No artist found for your current track", client)
+                return
+        else:
+            album_query = ' '.join(args)
 
-        album_query = ' '.join(args)
+            # Search for the album to get the canonical name
+            albums = await self.lastfm.search_album(album_query, limit=10)
+            if not albums:
+                await self.send_message(room, f"❌ No albums found matching '{album_query}'", client)
+                return
 
-        # Search for the album to get the canonical name
-        albums = await self.lastfm.search_album(album_query, limit=10)
-        if not albums:
-            await self.send_message(room, f"❌ No albums found matching '{album_query}'", client)
-            return
-
-        # Pick closest + most popular result
-        top_album = self._select_best_lastfm_result(albums, album_query, 'album') or albums[0]
-        album_name = top_album.get('name', album_query)
-        artist_name = self._extract_artist_name(top_album.get('artist', {})) if 'artist' in top_album else top_album.get('artist', 'Unknown')
+            # Pick closest + most popular result
+            top_album = self._select_best_lastfm_result(albums, album_query, 'album') or albums[0]
+            album_name = top_album.get('name', album_query)
+            artist_name = self._extract_artist_name(top_album.get('artist', {})) if 'artist' in top_album else top_album.get('artist', 'Unknown')
         album_cache_key = self._normalize_cache_text(album_name) or album_name
         artist_cache_key = self._normalize_cache_text(artist_name) or artist_name
 
