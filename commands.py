@@ -3,6 +3,7 @@ Command handler for bot commands
 """
 
 import logging
+import os
 import re
 import time
 import aiohttp
@@ -212,6 +213,118 @@ class CommandHandler:
             return int(value)
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _contains_cyrillic(text: str) -> bool:
+        if not text:
+            return False
+        return any(0x0400 <= ord(ch) <= 0x04FF for ch in text)
+
+    @staticmethod
+    def _is_truetype_font(font: ImageFont.ImageFont) -> bool:
+        return isinstance(font, ImageFont.FreeTypeFont)
+
+    def _load_chart_font(self, font_size: int) -> ImageFont.ImageFont:
+        font_candidates = []
+        if self.config.chart_font_path:
+            font_candidates.append(os.path.expanduser(self.config.chart_font_path))
+
+        font_candidates.extend([
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
+            "/Library/Fonts/Arial.ttf",
+        ])
+
+        for font_path in font_candidates:
+            if not font_path or not os.path.exists(font_path):
+                continue
+            try:
+                return ImageFont.truetype(font_path, font_size)
+            except Exception:
+                continue
+
+        return ImageFont.load_default()
+
+    def _draw_chart_text(
+        self,
+        collage: Image.Image,
+        x: int,
+        y: int,
+        tile_size: int,
+        artist_name: str,
+        album_name: str,
+        font: ImageFont.ImageFont
+    ) -> None:
+        if not (artist_name or album_name):
+            return
+
+        draw = ImageDraw.Draw(collage)
+
+        def truncate_to_width(text: str, max_width: int) -> str:
+            if not text:
+                return ''
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            if text_width <= max_width:
+                return text
+
+            ellipsis = '...'
+            trimmed = text
+            while trimmed:
+                trimmed = trimmed[:-1]
+                text_bbox = draw.textbbox((0, 0), trimmed + ellipsis, font=font)
+                if (text_bbox[2] - text_bbox[0]) <= max_width:
+                    return trimmed + ellipsis
+            return ellipsis
+
+        padding = 5
+        line_spacing = 2
+        max_text_width = tile_size - (padding * 2)
+
+        lines = []
+        if artist_name:
+            lines.append(truncate_to_width(artist_name, max_text_width))
+        if album_name:
+            lines.append(truncate_to_width(album_name, max_text_width))
+
+        lines = [line for line in lines if line]
+        if not lines:
+            return
+
+        line_metrics = []
+        max_line_width = 0
+        total_height = 0
+        for line in lines:
+            text_bbox = draw.textbbox((0, 0), line, font=font)
+            line_width = text_bbox[2] - text_bbox[0]
+            line_height = text_bbox[3] - text_bbox[1]
+            line_metrics.append((line, line_width, line_height))
+            max_line_width = max(max_line_width, line_width)
+            total_height += line_height
+
+        total_height += line_spacing * (len(lines) - 1)
+
+        block_x = x + (tile_size - max_line_width) // 2
+        block_y = y + tile_size - total_height - 10
+
+        line_y = block_y
+        for line, line_width, line_height in line_metrics:
+            line_x = block_x + (max_line_width - line_width) // 2
+            shadow_offset = 1
+            draw.text(
+                (line_x + shadow_offset, line_y + shadow_offset),
+                line,
+                fill=(0, 0, 0, 160),
+                font=font
+            )
+            draw.text((line_x, line_y), line, fill='#FFFFFF', font=font)
+            line_y += line_height + line_spacing
 
     def _lastfm_candidate_text(self, result: Dict[str, Any], kind: str) -> str:
         name = result.get('name', '')
@@ -1778,6 +1891,14 @@ The token expires in 10 minutes.
             await self.send_message(room, f"❌ No albums found for {lastfm_user} in this period", client)
             return
 
+        cyrillic_needed = False
+        for album in albums:
+            album_name = album.get('name', '') or ''
+            artist_name = self._extract_artist_name(album.get('artist', {}))
+            if self._contains_cyrillic(album_name) or self._contains_cyrillic(artist_name):
+                cyrillic_needed = True
+                break
+
         # Download album cover images
         tile_size = 300
         album_tiles = []  # List of (image, album_name, artist_name, has_cover)
@@ -1818,13 +1939,13 @@ The token expires in 10 minutes.
             if skip_empty:
                 continue
             else:
-                placeholder = Image.new('RGB', (tile_size, tile_size), color='#1a1a1a')
+                placeholder = Image.new('RGBA', (tile_size, tile_size), color=(0, 0, 0, 0))
                 album_tiles.append((placeholder, album_name, artist_name, False))
 
         # Pad with placeholders if needed (only if not skipping empty)
         if not skip_empty:
             while len(album_tiles) < total_albums:
-                placeholder = Image.new('RGB', (tile_size, tile_size), color='#1a1a1a')
+                placeholder = Image.new('RGBA', (tile_size, tile_size), color=(0, 0, 0, 0))
                 album_tiles.append((placeholder, '', '', False))
 
         # Adjust grid size if we have fewer items after filtering
@@ -1837,17 +1958,14 @@ The token expires in 10 minutes.
         # Create collage
         collage_width = cols * tile_size
         collage_height = rows * tile_size
-        collage = Image.new('RGB', (collage_width, collage_height), color='#0d0d0d')
+        collage = Image.new('RGBA', (collage_width, collage_height), color=(13, 13, 13, 0))
 
         # Load font for text overlay
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        except:
-            try:
-                # macOS fallback
-                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 18)
-            except:
-                font = ImageFont.load_default()
+        font = self._load_chart_font(14)
+        if cyrillic_needed and not self._is_truetype_font(font):
+            logger.warning(
+                "Cyrillic text detected, but no TrueType font was loaded. Set CHART_FONT_PATH to a Cyrillic-capable font."
+            )
 
         # Paste album covers with text overlay
         for idx, (img, album_name, artist_name, has_cover) in enumerate(album_tiles):
@@ -1860,76 +1978,13 @@ The token expires in 10 minutes.
             y = row * tile_size
 
             # Paste the album cover
-            collage.paste(img, (x, y))
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            collage.paste(img, (x, y), img)
 
             # Add text overlay with artist + album (if enabled)
             if show_titles and (album_name or artist_name):
-                draw = ImageDraw.Draw(collage)
-
-                def truncate_to_width(text: str, max_width: int) -> str:
-                    if not text:
-                        return ''
-                    text_bbox = draw.textbbox((0, 0), text, font=font)
-                    text_width = text_bbox[2] - text_bbox[0]
-                    if text_width <= max_width:
-                        return text
-
-                    ellipsis = '...'
-                    trimmed = text
-                    while trimmed:
-                        trimmed = trimmed[:-1]
-                        text_bbox = draw.textbbox((0, 0), trimmed + ellipsis, font=font)
-                        if (text_bbox[2] - text_bbox[0]) <= max_width:
-                            return trimmed + ellipsis
-                    return ellipsis
-
-                padding = 5
-                line_spacing = 2
-                max_text_width = tile_size - (padding * 2)
-
-                lines = []
-                if artist_name:
-                    lines.append(truncate_to_width(artist_name, max_text_width))
-                if album_name:
-                    lines.append(truncate_to_width(album_name, max_text_width))
-
-                # Filter out empty lines after truncation
-                lines = [line for line in lines if line]
-                if lines:
-                    line_metrics = []
-                    max_line_width = 0
-                    total_height = 0
-                    for line in lines:
-                        text_bbox = draw.textbbox((0, 0), line, font=font)
-                        line_width = text_bbox[2] - text_bbox[0]
-                        line_height = text_bbox[3] - text_bbox[1]
-                        line_metrics.append((line, line_width, line_height))
-                        max_line_width = max(max_line_width, line_width)
-                        total_height += line_height
-
-                    total_height += line_spacing * (len(lines) - 1)
-
-                    # Position text block at bottom of tile
-                    block_x = x + (tile_size - max_line_width) // 2
-                    block_y = y + tile_size - total_height - 10
-
-                    # Draw background rectangle
-                    draw.rectangle(
-                        [
-                            block_x - padding,
-                            block_y - padding,
-                            block_x + max_line_width + padding,
-                            block_y + total_height + padding,
-                        ],
-                        fill=(0, 0, 0, 180)
-                    )
-
-                    # Draw each line centered within the block
-                    line_y = block_y
-                    for line, line_width, line_height in line_metrics:
-                        line_x = block_x + (max_line_width - line_width) // 2
-                        draw.text((line_x, line_y), line, fill='#FFFFFF', font=font)
-                        line_y += line_height + line_spacing
+                self._draw_chart_text(collage, x, y, tile_size, artist_name, album_name, font)
 
         # Get period name for message
         period_name = self._get_period_name(period)
@@ -1971,6 +2026,7 @@ The token expires in 10 minutes.
         except Exception as e:
             await self.send_message(room, f"❌ Error generating chart: {str(e)}", client)
             logger.error(f"Chart generation error: {e}", exc_info=True)
+
 
     async def send_message(self, room: MatrixRoom, message: str, client: AsyncClient):
         """Send a message to the room."""

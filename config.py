@@ -67,6 +67,7 @@ class Config:
         # Bot Configuration
         self.command_prefix = _get("COMMAND_PREFIX", file_config, "!")
         self.log_level = _get("LOG_LEVEL", file_config, "INFO")
+        self.chart_font_path = _get("CHART_FONT_PATH", file_config)
 
         # Room Configuration - comma-separated list of room IDs or aliases to join
         rooms_str = _get("AUTO_JOIN_ROOMS", file_config) or ""
