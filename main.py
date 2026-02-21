@@ -6,6 +6,7 @@ FMatrix - Matrix Bot for Last.fm Stats and Leaderboards
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -35,6 +36,8 @@ async def health_check_loop():
     while True:
         try:
             health_file.write_text(f"{time.time():.0f}")
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Health check write failed: {e}")
         await asyncio.sleep(30)
@@ -61,14 +64,23 @@ async def main(config_path=None):
     bot = FMatrixBot(config_path=config_path)
 
     # Start health check loop in background
-    asyncio.create_task(health_check_loop())
+    health_task = asyncio.create_task(health_check_loop())
 
     try:
         # Initialize database
         await bot.init_db()
 
         # Start the bot
-        await bot.run()
+        run_result = await bot.run()
+        if run_result is False:
+            health_task.cancel()
+            try:
+                await asyncio.wait_for(health_task, timeout=5)
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning("Health check task shutdown failed: %s", e)
+            os._exit(1)
     except KeyboardInterrupt:
         logger.info("Bot interrupted by user")
     except Exception as e:

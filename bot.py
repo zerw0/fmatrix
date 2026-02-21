@@ -82,9 +82,10 @@ class FMatrixBot:
 
         if isinstance(login_response, LoginResponse):
             logger.info(f"Logged in successfully. Device ID: {login_response.device_id}")
+            return True
         else:
             logger.error(f"Login failed: {login_response}")
-            raise RuntimeError("Failed to login to Matrix server")
+            return False
 
     async def join_configured_rooms(self):
         """Join pre-configured rooms."""
@@ -182,7 +183,10 @@ class FMatrixBot:
             self.config
         )
 
-        await self.login()
+        logged_in = await self.login()
+        if not logged_in:
+            logger.error("Matrix login failed; exiting.")
+            return False
 
         # Join configured rooms
         await self.join_configured_rooms()
@@ -196,6 +200,7 @@ class FMatrixBot:
         logger.info("Starting sync loop...")
         # Use custom sync loop to handle invites
         await self.sync_with_invite_handling()
+        return True
 
     async def cache_cleanup_loop(self):
         """Periodically clean up old cache entries."""
@@ -212,6 +217,8 @@ class FMatrixBot:
                 if runs % 24 == 0:
                     await self.db.optimize()
                 logger.info("Cache cleanup completed")
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Error during cache cleanup: {e}", exc_info=True)
 
