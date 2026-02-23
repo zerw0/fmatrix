@@ -2363,7 +2363,14 @@ The token expires in 10 minutes.
                 format_display = format_emoji.get(format_name, '🎵')
 
                 # Create Discogs URL
-                discogs_url = f"https://www.discogs.com/release/{release_id}" if release_id else None
+                def slugify(text):
+                    import re
+                    slug = re.sub(r'[^\w\-]+', '-', text)
+                    slug = re.sub(r'-+', '-', slug)
+                    return slug.strip('-')
+
+                slug = slugify(f"{artist_name} {title}")
+                discogs_url = f"https://www.discogs.com/release/{release_id}-{slug}" if release_id else None
 
                 # Format the line
                 if discogs_url:
@@ -2371,8 +2378,9 @@ The token expires in 10 minutes.
                 else:
                     items_text.append(f"{format_display} {artist_name} - {title} ({year})")
 
+            collection_link = f"https://www.discogs.com/user/{discogs_username}/collection"
             collection_text = f"""
-📀 **{discogs_username}'s Collection** (Page {page_num}/{total_pages})
+📀 **[{discogs_username}'s Collection]({collection_link})** (Page {page_num}/{total_pages})
 Total: {total_items:,} items
 
 {chr(10).join(items_text)}
@@ -2468,7 +2476,14 @@ Total: {total_items:,} items
                 format_display = format_emoji.get(format_name, '🎵')
 
                 # Create Discogs URL
-                discogs_url = f"https://www.discogs.com/release/{release_id}" if release_id else None
+                def slugify(text):
+                    import re
+                    slug = re.sub(r'[^\w\-]+', '-', text)
+                    slug = re.sub(r'-+', '-', slug)
+                    return slug.strip('-')
+
+                slug = slugify(f"{artist_name} {title}")
+                discogs_url = f"https://www.discogs.com/release/{release_id}-{slug}" if release_id else None
 
                 # Format the line
                 if discogs_url:
@@ -2476,8 +2491,9 @@ Total: {total_items:,} items
                 else:
                     items_text.append(f"{format_display} {artist_name} - {title} ({year})")
 
+            wantlist_link = f"https://www.discogs.com/user/{discogs_username}/wantlist"
             wantlist_text = f"""
-🎯 **{discogs_username}'s Wantlist** (Page {page_num}/{total_pages})
+🎯 **[{discogs_username}'s Wantlist]({wantlist_link})** (Page {page_num}/{total_pages})
 Total: {total_items:,} items
 
 {chr(10).join(items_text)}
@@ -2523,9 +2539,11 @@ Total: {total_items:,} items
         results = await self.discogs.search(query, per_page=5)
 
         if not results or 'results' not in results:
+            # Check for Discogs outage or site error
+            outage_message = "Discogs may be temporarily unavailable. Please check https://status.discogs.com for site status."
             await self.send_message(
                 room,
-                f"❌ No results found for '{query}'.",
+                f"❌ No results found for '{query}'. {outage_message}",
                 client
             )
             return
@@ -2548,21 +2566,38 @@ Total: {total_items:,} items
             year_str = f" ({year})" if year else ""
             resource_url = item.get('resource_url', '')
 
-            # Extract ID from resource_url and create Discogs link
             if resource_url:
-                # Resource URLs look like: https://api.discogs.com/releases/123 or https://api.discogs.com/artists/456
                 discogs_id = resource_url.rstrip('/').split('/')[-1]
-                discogs_link = f"https://www.discogs.com/{item_type.lower()}s/{discogs_id}" if item_type.lower() in ['release', 'artist', 'master'] else resource_url.replace('api.discogs.com', 'www.discogs.com')
-                items_text.append(f"• [{item_type}] [{title}]({discogs_link}){year_str}")
+                item_type_lower = item_type.lower()
+                if item_type_lower == 'release':
+                    release_info = await self.discogs.get_release(discogs_id)
+                    if release_info:
+                        discogs_link = f"https://www.discogs.com/release/{discogs_id}"
+                        country = release_info.get('country', 'Unknown')
+                        label_list = release_info.get('labels', [])
+                        label = label_list[0].get('name', 'Unknown') if label_list else 'Unknown'
+                        format_list = release_info.get('formats', [])
+                        format_str = ', '.join([fmt.get('name', '') for fmt in format_list]) if format_list else 'Unknown'
+                        edition = release_info.get('title', '')
+                        catno = label_list[0].get('catno', '') if label_list else ''
+                        extra = f"Country: {country} | Label: {label} | Format: {format_str}"
+                        if catno:
+                            extra += f" | Cat#: {catno}"
+                        items_text.append(f"• Release: [{title}]({discogs_link}){year_str}\n    {extra}")
+                    else:
+                        items_text.append(f"• [Release] {title}{year_str} (unavailable)")
+                elif item_type_lower == 'master':
+                    discogs_link = f"https://www.discogs.com/master/{discogs_id}"
+                    items_text.append(f"• Master: [{title}]({discogs_link}){year_str}")
+                elif item_type_lower == 'artist':
+                    discogs_link = f"https://www.discogs.com/artist/{discogs_id}"
+                    items_text.append(f"• Artist: [{title}]({discogs_link}){year_str}")
+                else:
+                    items_text.append(f"• {item_type}: {title}{year_str}")
             else:
-                items_text.append(f"• [{item_type}] {title}{year_str}")
+                items_text.append(f"• {item_type}: {title}{year_str}")
 
-        search_text = f"""
-🔍 **Discogs Search Results** for '{query}'
-
-{chr(10).join(items_text)}
-        """
-
+        search_text = f"🔍 **Discogs Search Results** for '{query}':\n\n" + '\n'.join(items_text)
         await self.send_message(room, search_text.strip(), client)
 
     async def show_discogs_artist(self, room: MatrixRoom, args: list, client: AsyncClient):
@@ -2647,7 +2682,7 @@ Total: {total_items:,} items
         if not release_info:
             await self.send_message(
                 room,
-                f"❌ Could not retrieve info for release '{release_name}'.",
+                f"❌ Release info unavailable. The Discogs page may be removed or restricted. Try searching for another release or check Discogs directly.",
                 client
             )
             return
