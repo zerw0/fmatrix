@@ -18,7 +18,7 @@ from database import Database
 from lastfm_client import LastfmClient
 from discogs_client import DiscogsClient
 from spotify_client import SpotifyClient
-from commands import CommandHandler
+from bot_commands import CommandHandler
 
 logger = logging.getLogger(__name__)
 

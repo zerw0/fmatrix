@@ -139,7 +139,7 @@ overall, 1y, all    → All time (default)
 ```
 main.py              Starts everything
 bot.py              Matrix client stuff
-commands.py         All the command logic
+bot_commands/       Split command logic (router/base/lastfm/discogs)
 lastfm_client.py    Talks to Last.fm's API
 discogs_client.py   Talks to Discogs API
 spotify_client.py   Talks to Spotify's API
