@@ -103,6 +103,8 @@ class CommandHandler:
         'dg': 'discogs',
         'dgc': 'dgcollection',
         'dgw': 'dgwantlist',
+        'spotify': 'spotify',
+        'sp': 'spotify',
     }
 
     # Period abbreviations
@@ -134,10 +136,11 @@ class CommandHandler:
         '7days': 'Last 7 Days'
     }
 
-    def __init__(self, db: Database, lastfm: LastfmClient, discogs, config: Config):
+    def __init__(self, db: Database, lastfm: LastfmClient, discogs, spotify, config: Config):
         self.db = db
         self.lastfm = lastfm
         self.discogs = discogs
+        self.spotify = spotify
         self.config = config
         self.pagination = PaginationManager()
         self._now_playing_cache: Dict[str, Dict[str, Any]] = {}
@@ -396,6 +399,40 @@ class CommandHandler:
 
         return best_result
 
+    def _select_best_spotify_result(self, results: list, query: str) -> Optional[Dict[str, Any]]:
+        """Select the best Spotify track result using fuzzy matching."""
+        if not results:
+            return None
+
+        best_result = None
+        best_score = -1.0
+        best_similarity = -1.0
+
+        for result in results:
+            # Build candidate text from track name and artist names
+            track_name = result.get('name', '')
+            artists = [artist.get('name', '') for artist in result.get('artists', [])]
+            candidate = f"{track_name} {' '.join(artists)}"
+            similarity = self._fuzzy_ratio(query, candidate)
+
+            # Spotify doesn't have popularity in the same way, so just use similarity
+            if similarity > best_score or (abs(similarity - best_score) < 1e-6 and similarity > best_similarity):
+                best_result = result
+                best_score = similarity
+                best_similarity = similarity
+
+        return best_result
+
+    def _format_spotify_track(self, track: Dict) -> Dict[str, str]:
+        """Format a Spotify track result for display."""
+        return {
+            'name': track.get('name'),
+            'artist': ', '.join([artist.get('name', '') for artist in track.get('artists', [])]),
+            'album': track.get('album', {}).get('name'),
+            'url': track.get('external_urls', {}).get('spotify'),
+            'uri': track.get('uri')
+        }
+
     def _get_period_name(self, period: str) -> str:
         """Get display name for a period."""
         return self.PERIOD_NAMES.get(period, period)
@@ -456,6 +493,11 @@ class CommandHandler:
                     await self.generate_chart(room, sender, args[1:], client)
                 elif self.normalize_command(args[0]) == 'leaderboard':
                     await self.show_leaderboard(room, args[1:], client)
+                elif self.normalize_command(args[0]) == 'spotify':
+                    if not self.spotify:
+                        await self.send_message(room, "❌ Spotify integration is not configured.", client)
+                        return
+                    await self.show_spotify_link(room, sender, args[1:], client)
                 else:
                     await self.send_message(room, f"Unknown command: {args[0]}", client)
             elif command == 'discogs':
@@ -483,6 +525,17 @@ class CommandHandler:
                     await self.show_discogs_release(room, args[1:], client)
                 else:
                     await self.send_message(room, f"Unknown Discogs command: {args[0]}", client)
+            elif command == 'spotify':
+                if not self.spotify:
+                    await self.send_message(room, "❌ Spotify integration is not configured.", client)
+                    return
+
+                if not args:
+                    # No args - show now playing from Last.fm and search on Spotify
+                    await self.show_spotify_link(room, sender, [], client)
+                else:
+                    # Search for specific track
+                    await self.show_spotify_link(room, sender, args, client)
             else:
                 await self.send_message(room, f"Unknown command. Type `{self.config.command_prefix}fm help` for help.", client)
 
@@ -593,6 +646,10 @@ class CommandHandler:
         if self.discogs:
             discogs_info = f"\n\n**Discogs Integration:**\nUse `{self.config.command_prefix}discogs help` (dg help) for Discogs commands"
 
+        spotify_info = ""
+        if self.spotify:
+            spotify_info = f"\n\n**Spotify Integration:**\n`{self.config.command_prefix}spotify` (sp) - Get Spotify link for now playing track\n`{self.config.command_prefix}spotify <artist> - <track>` - Search and get Spotify link for a track"
+
         help_text = f"""
 FMatrix Bot - Last.fm Stats & Leaderboards
 
@@ -639,7 +696,7 @@ Done! ✅
 `{self.config.command_prefix}fm loved` - Show your loved tracks
 `{self.config.command_prefix}fm love Black Sabbath - Iron Man` - Love Iron Man
 
-**GitHub:** [Source Code](https://github.com/zerw0/fmatrix){discogs_info}
+**GitHub:** [Source Code](https://github.com/zerw0/fmatrix){discogs_info}{spotify_info}
         """
         await self.send_message(room, help_text, client)
 
@@ -1065,6 +1122,82 @@ The token expires in 10 minutes.
             'timestamp': time.monotonic(),
             'message': message
         }
+        await self.send_message(room, message, client)
+
+    async def show_spotify_link(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+        """Show Spotify link for a track.
+
+        If no args: Get current track from Last.fm and search on Spotify
+        If args provided: Search for the provided song name on Spotify
+        """
+        track_name = None
+        artist_name = None
+
+        if not args:
+            # Get current track from Last.fm
+            target_user = await self._get_target_user(room, sender, client)
+            if not target_user:
+                return
+
+            track = await self.lastfm.get_now_playing(target_user)
+            if not track:
+                await self.send_message(room, f"❌ Could not fetch now playing track for {target_user}", client)
+                return
+
+            track_name = track.get('name', 'Unknown')
+            artist_name = self._extract_artist_name(track.get('artist', {}))
+        else:
+            # Parse the provided args as song name or "artist - track"
+            args_str = ' '.join(args)
+            if ' - ' in args_str:
+                parts = args_str.split(' - ', 1)
+                artist_name = parts[0].strip()
+                track_name = parts[1].strip()
+            else:
+                track_name = args_str
+
+        # Search on Spotify
+        if not track_name:
+            await self.send_message(room, "❌ Could not determine track name", client)
+            return
+
+        # Build search query
+        if artist_name:
+            search_query = f"{artist_name} {track_name}"
+        else:
+            search_query = track_name
+
+        # Search Spotify
+        spotify_results = await self.spotify.search_track(search_query, limit=10)
+        if not spotify_results:
+            await self.send_message(
+                room,
+                f"❌ Could not find '{search_query}' on Spotify",
+                client
+            )
+            return
+
+        # Use fuzzy matching to select the best result
+        best_track = self._select_best_spotify_result(spotify_results, search_query)
+        if not best_track or not best_track.get('external_urls', {}).get('spotify'):
+            await self.send_message(
+                room,
+                f"❌ Could not find '{search_query}' on Spotify",
+                client
+            )
+            return
+
+        # Format the result
+        spotify_track = self._format_spotify_track(best_track)
+
+        # Format message
+        message = f"🎵 **Spotify Link**\n\n"
+        message += f"**{spotify_track['name']}**\n"
+        message += f"by *{spotify_track['artist']}*\n"
+        if spotify_track.get('album'):
+            message += f"on {spotify_track['album']}\n"
+        message += f"\n🔗 [Open on Spotify]({spotify_track['url']})"
+
         await self.send_message(room, message, client)
 
     async def show_track_info(self, room: MatrixRoom, args: list, client: AsyncClient):

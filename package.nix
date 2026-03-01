@@ -18,6 +18,7 @@ pkgs.python3Packages.buildPythonApplication rec {
     aiosqlite
     pillow
     matrix-nio
+    spotipy
   ];
   meta.mainProgram = "fmatrix";
 }

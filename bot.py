@@ -17,6 +17,7 @@ from config import Config
 from database import Database
 from lastfm_client import LastfmClient
 from discogs_client import DiscogsClient
+from spotify_client import SpotifyClient
 from commands import CommandHandler
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,12 @@ class FMatrixBot:
         self.discogs = None
         if self.config.discogs_user_token:
             self.discogs = DiscogsClient(self.config.discogs_user_token)
+        self.spotify = None
+        if self.config.spotify_client_id and self.config.spotify_client_secret:
+            self.spotify = SpotifyClient(
+                self.config.spotify_client_id,
+                self.config.spotify_client_secret
+            )
         self.command_handler: Optional[CommandHandler] = None
 
     async def init_db(self):
@@ -180,6 +187,7 @@ class FMatrixBot:
             self.db,
             self.lastfm,
             self.discogs,
+            self.spotify,
             self.config
         )
 

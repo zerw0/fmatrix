@@ -64,6 +64,10 @@ class Config:
         # Discogs Configuration
         self.discogs_user_token = _get("DISCOGS_USER_TOKEN", file_config)
 
+        # Spotify Configuration
+        self.spotify_client_id = _get("SPOTIFY_CLIENT_ID", file_config)
+        self.spotify_client_secret = _get("SPOTIFY_CLIENT_SECRET", file_config)
+
         # Bot Configuration
         self.command_prefix = _get("COMMAND_PREFIX", file_config, "!")
         self.log_level = _get("LOG_LEVEL", file_config, "INFO")

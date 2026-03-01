@@ -15,11 +15,16 @@ Here's what you need:
    - Generate a new token for personal use
    - Copy the token for your `.env` file
 
-**3. Matrix bot account**
+**3. Spotify API credentials (Optional)**
+   - Go to https://developer.spotify.com/dashboard
+   - Create an app and copy your Client ID and Client Secret
+   - Copy them for your `.env` file
+
+**4. Matrix bot account**
    - Register a bot account on your homeserver (matrix.org works)
    - You'll need the full user ID like `@fmatrix:matrix.org` and password
 
-**3. Setup**
+**5. Setup**
 
 Either use a config file (same format as `.env.example`) or set environment variables.
 
@@ -39,8 +44,10 @@ MATRIX_PASSWORD=your_password
 LASTFM_API_KEY=get_this_from_lastfm
 LASTFM_API_SECRET=get_this_too
 DISCOGS_USER_TOKEN=optional_discogs_token
+SPOTIFY_CLIENT_ID=optional_spotify_clientid
+SPOTIFY_CLIENT_SECRET=optional_spotify_secret
 ```
-**Option B – environment variables**  
+**Option B – environment variables**
 Export `MATRIX_*`, `LASTFM_*`, etc. (see Config section below).
 
 **4. Run it**
@@ -104,6 +111,10 @@ All commands start with `!fm` (or use shortcuts). Here's what works:
 - `!dg release name` - Get release info
 - `!dg help` - Show Discogs help
 
+**Spotify (if configured):**
+- `!spotify` or `!sp` - Get Spotify link for your now playing track
+- `!spotify Artist - Track` - Search for a track and get Spotify link
+
 **Time periods:** (add to any stat command)
 ```
 7d, 7day, 7days     → Last week
@@ -131,6 +142,7 @@ bot.py              Matrix client stuff
 commands.py         All the command logic
 lastfm_client.py    Talks to Last.fm's API
 discogs_client.py   Talks to Discogs API
+spotify_client.py   Talks to Spotify's API
 database.py         SQLite for caching and user links
 config.py           Reads env vars and optional .env-format config file
 ```
@@ -157,6 +169,8 @@ MATRIX_PASSWORD=hunter2                      # Bot password
 LASTFM_API_KEY=abc123                        # From Last.fm
 LASTFM_API_SECRET=def456                     # Also from Last.fm
 DISCOGS_USER_TOKEN=xyz789                    # Optional: From Discogs
+SPOTIFY_CLIENT_ID=abc123                     # Optional: From Spotify Developer Dashboard
+SPOTIFY_CLIENT_SECRET=def456                 # Optional: From Spotify Developer Dashboard
 COMMAND_PREFIX=!                             # Change if you want
 LOG_LEVEL=INFO                               # DEBUG for more logs
 DATA_DIR=/data                               # Where to save the database
@@ -171,6 +185,7 @@ AUTO_JOIN_ROOMS=                             # Comma-separated room IDs/aliases 
 - All Last.fm data is public anyway, so no privacy concerns
 - Discogs integration is optional - the bot works fine without it
 - Discogs commands require a user token (free from Discogs settings)
+- Spotify integration is optional - get Spotify links for tracks (requires Spotify API credentials)
 
 ## Credits
 
