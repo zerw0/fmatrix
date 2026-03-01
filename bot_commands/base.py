@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-"""
-Command handler for bot commands
-"""
+"""Shared base utilities and state for split bot command handlers."""
 
 import logging
 import os
