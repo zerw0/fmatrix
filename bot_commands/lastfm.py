@@ -8,7 +8,7 @@ from typing import Callable, Dict, Optional
 
 import aiohttp
 from nio import AsyncClient, MatrixRoom
-from nio.responses import UploadResponse, UploadError
+from nio.responses import UploadError, UploadResponse
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,12 @@ class LastfmCommandsMixin:
 
         spotify_info = ""
         if self.spotify:
-            spotify_info = f"\n\n**Spotify Integration:**\n`{self.config.command_prefix}spotify` (sp) - Get Spotify link for now playing track\n`{self.config.command_prefix}spotify <artist> - <track>` - Search and get Spotify link for a track"
+            spotify_info = (
+                f"\n\n**Spotify Commands:**\n"
+                f"`{self.config.command_prefix}spotify` (sp) - Get Spotify link for your now playing track\n"
+                f"`{self.config.command_prefix}spotify <artist> - <track>` (sp) - Search and get Spotify link for a specific track\n"
+                f"`{self.config.command_prefix}fm spotify` - Get Spotify link from within the fm command"
+            )
 
         help_text = f"""
 FMatrix Bot - Last.fm Stats & Leaderboards
@@ -75,11 +80,17 @@ Done! ✅
         """
         await self.send_message(room, help_text, client)
 
-    async def link_user(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def link_user(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Link a Matrix user to a Last.fm account and start auth flow."""
-        logger.info(f"link_user called - sender type: {type(sender).__name__}, sender value: '{sender}'")
+        logger.info(
+            f"link_user called - sender type: {type(sender).__name__}, sender value: '{sender}'"
+        )
         if not args:
-            await self.send_message(room, f"Usage: `{self.config.command_prefix}fm link <username>`", client)
+            await self.send_message(
+                room, f"Usage: `{self.config.command_prefix}fm link <username>`", client
+            )
             return
 
         lastfm_username = args[0]
@@ -88,7 +99,9 @@ Done! ✅
         logger.info(f"Linking {sender} to Last.fm user {lastfm_username}")
         user_info = await self.lastfm.get_user_info(lastfm_username)
         if not user_info:
-            await self.send_message(room, f"❌ Last.fm user '{lastfm_username}' not found", client)
+            await self.send_message(
+                room, f"❌ Last.fm user '{lastfm_username}' not found", client
+            )
             return
 
         # Store the mapping
@@ -105,7 +118,7 @@ Done! ✅
         await self.send_message(
             room,
             f"✅ Linked {sender} to Last.fm user **{lastfm_username}**\n\n� Sending authorization link via DM...",
-            client
+            client,
         )
 
         # Now start the auth flow automatically
@@ -118,7 +131,7 @@ Done! ✅
                 await self.send_message(
                     room,
                     "❌ Failed to get auth token from Last.fm. Please try again later.",
-                    client
+                    client,
                 )
                 return
 
@@ -148,17 +161,23 @@ Done! ✅
             sent_dm = False
             try:
                 # Ensure sender has full user ID format
-                user_id = sender if sender.startswith("@") else f"@{sender}:{client.homeserver.split('https://')[-1]}"
-                logger.info(f"Attempting to send DM to {sender} with full ID: {user_id}")
+                user_id = (
+                    sender
+                    if sender.startswith("@")
+                    else f"@{sender}:{client.homeserver.split('https://')[-1]}"
+                )
+                logger.info(
+                    f"Attempting to send DM to {sender} with full ID: {user_id}"
+                )
 
                 # Create DM room
                 from nio.responses import RoomCreateResponse
-                dm_response = await client.room_create(
-                    is_direct=True,
-                    invite=[user_id]
-                )
 
-                logger.info(f"DM room creation response type: {type(dm_response).__name__}")
+                dm_response = await client.room_create(is_direct=True, invite=[user_id])
+
+                logger.info(
+                    f"DM room creation response type: {type(dm_response).__name__}"
+                )
 
                 if isinstance(dm_response, RoomCreateResponse):
                     dm_room_id = dm_response.room_id
@@ -168,34 +187,43 @@ Done! ✅
                     send_response = await client.room_send(
                         dm_room_id,
                         "m.room.message",
-                        {
-                            "msgtype": "m.text",
-                            "body": message
-                        }
+                        {"msgtype": "m.text", "body": message},
                     )
-                    logger.info(f"DM message send response type: {type(send_response).__name__}")
+                    logger.info(
+                        f"DM message send response type: {type(send_response).__name__}"
+                    )
                     sent_dm = True
-                    await self.send_message(room, "✅ Authorization link sent via DM!", client)
+                    await self.send_message(
+                        room, "✅ Authorization link sent via DM!", client
+                    )
                 else:
-                    logger.warning(f"Unexpected response type from room_create: {type(dm_response).__name__} - {dm_response}")
-                    await self.send_message(room, f"⚠️ Could not send DM. Showing auth link here:", client)
+                    logger.warning(
+                        f"Unexpected response type from room_create: {type(dm_response).__name__} - {dm_response}"
+                    )
+                    await self.send_message(
+                        room, f"⚠️ Could not send DM. Showing auth link here:", client
+                    )
                     await self.send_message(room, message, client)
             except Exception as dm_error:
                 logger.error(f"Failed to send DM: {dm_error}", exc_info=True)
-                await self.send_message(room, f"⚠️ Could not send DM. Showing auth link here:", client)
+                await self.send_message(
+                    room, f"⚠️ Could not send DM. Showing auth link here:", client
+                )
                 await self.send_message(room, message, client)
 
         except Exception as e:
             logger.error(f"Error in auth flow: {e}", exc_info=True)
             await self.send_message(room, f"❌ Error: {str(e)}", client)
 
-    async def set_session_key(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def set_session_key(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Set Last.fm session key for authenticated commands."""
         if not args:
             await self.send_message(
                 room,
                 f"Usage: `{self.config.command_prefix}fm sessionkey <your_session_key>`\n\nGet your session key from: https://www.last.fm/api/auth",
-                client
+                client,
             )
             return
 
@@ -207,7 +235,7 @@ Done! ✅
             await self.send_message(
                 room,
                 f"✅ Session key saved. You can now use love/unlove commands!",
-                client
+                client,
             )
         else:
             await self.send_message(room, "❌ Failed to save session key", client)
@@ -221,7 +249,7 @@ Done! ✅
                 await self.send_message(
                     room,
                     "❌ Failed to get auth token from Last.fm. Please try again later.",
-                    client
+                    client,
                 )
                 return
 
@@ -258,10 +286,14 @@ The token expires in 10 minutes.
             logger.error(f"Error in auth flow: {e}", exc_info=True)
             await self.send_message(room, f"❌ Error: {str(e)}", client)
 
-    async def complete_auth_flow(self, room: MatrixRoom, sender: str, client: AsyncClient):
+    async def complete_auth_flow(
+        self, room: MatrixRoom, sender: str, client: AsyncClient
+    ):
         """Complete Last.fm authorization by exchanging token for session key."""
         try:
-            logger.info(f"complete_auth_flow called - sender type: {type(sender).__name__}, sender value: '{sender}'")
+            logger.info(
+                f"complete_auth_flow called - sender type: {type(sender).__name__}, sender value: '{sender}'"
+            )
 
             # Get the stored auth token
             auth_token = await self.db.get_auth_token(sender)
@@ -270,7 +302,7 @@ The token expires in 10 minutes.
                 await self.send_message(
                     room,
                     f"❌ No pending auth token. Run `{self.config.command_prefix}fm link` first.",
-                    client
+                    client,
                 )
                 return
 
@@ -283,7 +315,7 @@ The token expires in 10 minutes.
                 await self.send_message(
                     room,
                     "❌ Failed to get session key. Make sure you authorized the app.",
-                    client
+                    client,
                 )
                 return
 
@@ -305,14 +337,16 @@ The token expires in 10 minutes.
             await self.send_message(
                 room,
                 f"✅ Authorization successful! Session key saved.\n\n🎵 You can now use:\n`{self.config.command_prefix}fm love <artist> - <track>`\n`{self.config.command_prefix}fm unlove <artist> - <track>`",
-                client
+                client,
             )
 
         except Exception as e:
             logger.error(f"Error completing auth: {e}", exc_info=True)
             await self.send_message(room, f"❌ Error: {str(e)}", client)
 
-    async def show_stats(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def show_stats(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show user's Last.fm stats."""
         target_user = await self._get_target_user(room, sender, client, args)
         if not target_user:
@@ -321,23 +355,27 @@ The token expires in 10 minutes.
         # Get stats
         stats = await self.lastfm.get_user_stats(target_user)
         if not stats:
-            await self.send_message(room, f"❌ Could not fetch stats for {target_user}", client)
+            await self.send_message(
+                room, f"❌ Could not fetch stats for {target_user}", client
+            )
             return
 
         # Format message
         message = f"""
-**{stats['username']}**'s Last.fm Stats:
-📊 Scrobbles: {stats['play_count']:,}
-🎤 Artists: {stats['artist_count']:,}
-🎵 Tracks: {stats['track_count']:,}
-💿 Albums: {stats['album_count']:,}
+**{stats["username"]}**'s Last.fm Stats:
+📊 Scrobbles: {stats["play_count"]:,}
+🎤 Artists: {stats["artist_count"]:,}
+🎵 Tracks: {stats["track_count"]:,}
+💿 Albums: {stats["album_count"]:,}
         """
 
         await self.send_message(room, message, client)
 
-    async def show_top_artists(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def show_top_artists(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show user's top artists."""
-        period = self.normalize_period(args[0].lower()) if args else 'overall'
+        period = self.normalize_period(args[0].lower()) if args else "overall"
 
         if not await self._validate_period(room, period, client):
             return
@@ -348,22 +386,26 @@ The token expires in 10 minutes.
 
         artists = await self.lastfm.get_top_artists(target_user, period, limit=10)
         if not artists:
-            await self.send_message(room, f"❌ Could not fetch top artists for {target_user}", client)
+            await self.send_message(
+                room, f"❌ Could not fetch top artists for {target_user}", client
+            )
             return
 
         period_name = self._get_period_name(period)
         message = f"**Top Artists ({period_name})**\n\n"
 
         for i, artist in enumerate(artists, 1):
-            name = artist.get('name', 'Unknown')
-            plays = artist.get('playcount', '0')
+            name = artist.get("name", "Unknown")
+            plays = artist.get("playcount", "0")
             message += f"{i}. {name} - {plays} plays\n"
 
         await self.send_message(room, message, client)
 
-    async def show_top_albums(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def show_top_albums(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show user's top albums."""
-        period = self.normalize_period(args[0].lower()) if args else 'overall'
+        period = self.normalize_period(args[0].lower()) if args else "overall"
 
         if not await self._validate_period(room, period, client):
             return
@@ -381,16 +423,18 @@ The token expires in 10 minutes.
         message = f"**Top Albums ({period_name})**\n\n"
 
         for i, album in enumerate(albums, 1):
-            name = album.get('name', 'Unknown')
-            artist_name = self._extract_artist_name(album.get('artist', {}))
-            plays = album.get('playcount', '0')
+            name = album.get("name", "Unknown")
+            artist_name = self._extract_artist_name(album.get("artist", {}))
+            plays = album.get("playcount", "0")
             message += f"{i}. {name} by {artist_name} - {plays} plays\n"
 
         await self.send_message(room, message, client)
 
-    async def show_top_tracks(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def show_top_tracks(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show user's top tracks."""
-        period = self.normalize_period(args[0].lower()) if args else 'overall'
+        period = self.normalize_period(args[0].lower()) if args else "overall"
 
         if not await self._validate_period(room, period, client):
             return
@@ -408,14 +452,16 @@ The token expires in 10 minutes.
         message = f"**Top Tracks ({period_name})**\n\n"
 
         for i, track in enumerate(tracks, 1):
-            name = track.get('name', 'Unknown')
-            artist_name = self._extract_artist_name(track.get('artist', {}))
-            plays = track.get('playcount', '0')
+            name = track.get("name", "Unknown")
+            artist_name = self._extract_artist_name(track.get("artist", {}))
+            plays = track.get("playcount", "0")
             message += f"{i}. {name} by {artist_name} - {plays} plays\n"
 
         await self.send_message(room, message, client)
 
-    async def show_recent_tracks(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def show_recent_tracks(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show user's recent tracks."""
         target_user = await self._get_target_user(room, sender, client)
         if not target_user:
@@ -429,13 +475,15 @@ The token expires in 10 minutes.
         message = f"**Recent Tracks - {target_user}**\n\n"
 
         for i, track in enumerate(tracks, 1):
-            name = track.get('name', 'Unknown')
-            artist_name = self._extract_artist_name(track.get('artist', {}))
+            name = track.get("name", "Unknown")
+            artist_name = self._extract_artist_name(track.get("artist", {}))
             message += f"{i}. {name} by {artist_name}\n"
 
         await self.send_message(room, message, client)
 
-    async def show_now_playing(self, room: MatrixRoom, sender: str, client: AsyncClient):
+    async def show_now_playing(
+        self, room: MatrixRoom, sender: str, client: AsyncClient
+    ):
         """Show user's currently playing track."""
         target_user = await self._get_target_user(room, sender, client)
         if not target_user:
@@ -443,49 +491,57 @@ The token expires in 10 minutes.
 
         cached_entry = self._now_playing_cache.get(target_user)
         if cached_entry:
-            age = time.monotonic() - cached_entry['timestamp']
+            age = time.monotonic() - cached_entry["timestamp"]
             if age < self._now_playing_ttl_seconds:
-                await self.send_message(room, cached_entry['message'], client)
+                await self.send_message(room, cached_entry["message"], client)
                 return
 
         track = await self.lastfm.get_now_playing(target_user)
         if not track:
-            await self.send_message(room, f"❌ Could not fetch now playing track for {target_user}", client)
+            await self.send_message(
+                room, f"❌ Could not fetch now playing track for {target_user}", client
+            )
             return
 
-        name = track.get('name', 'Unknown')
-        artist_name = self._extract_artist_name(track.get('artist', {}))
-        album = track.get('album', {})
-        album_name = album.get('text', 'Unknown') if isinstance(album, dict) else album or 'Unknown'
+        name = track.get("name", "Unknown")
+        artist_name = self._extract_artist_name(track.get("artist", {}))
+        album = track.get("album", {})
+        album_name = (
+            album.get("text", "Unknown")
+            if isinstance(album, dict)
+            else album or "Unknown"
+        )
         track_cache_key = self._normalize_cache_text(name) or name
         artist_cache_key = self._normalize_cache_text(artist_name) or artist_name
-        play_count = track.get('userplaycount')
+        play_count = track.get("userplaycount")
         if play_count is None:
             cached_playcount = await self.db.get_cached_playcount(
                 target_user,
-                'track',
+                "track",
                 track_cache_key,
                 artist_name=artist_cache_key,
-                max_age_hours=1
+                max_age_hours=1,
             )
             if cached_playcount is not None:
                 play_count = cached_playcount
             else:
-                track_info = await self.lastfm.get_track_info(artist_name, name, username=target_user)
+                track_info = await self.lastfm.get_track_info(
+                    artist_name, name, username=target_user
+                )
                 if track_info:
-                    user_playcount = track_info.get('userplaycount')
+                    user_playcount = track_info.get("userplaycount")
                     if user_playcount is not None:
                         play_count = int(user_playcount) if user_playcount else 0
                         await self.db.cache_playcount(
                             target_user,
-                            'track',
+                            "track",
                             track_cache_key,
                             play_count,
-                            artist_name=artist_cache_key
+                            artist_name=artist_cache_key,
                         )
 
         if play_count is None:
-            play_count = 'N/A'
+            play_count = "N/A"
 
         message = f"🎵 **Now Playing - {target_user}**\n\n"
         message += f"**{name}**\n"
@@ -494,12 +550,14 @@ The token expires in 10 minutes.
         message += f"Plays: {play_count}"
 
         self._now_playing_cache[target_user] = {
-            'timestamp': time.monotonic(),
-            'message': message
+            "timestamp": time.monotonic(),
+            "message": message,
         }
         await self.send_message(room, message, client)
 
-    async def show_spotify_link(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def show_spotify_link(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show Spotify link for a track.
 
         If no args: Get current track from Last.fm and search on Spotify
@@ -516,16 +574,20 @@ The token expires in 10 minutes.
 
             track = await self.lastfm.get_now_playing(target_user)
             if not track:
-                await self.send_message(room, f"❌ Could not fetch now playing track for {target_user}", client)
+                await self.send_message(
+                    room,
+                    f"❌ Could not fetch now playing track for {target_user}",
+                    client,
+                )
                 return
 
-            track_name = track.get('name', 'Unknown')
-            artist_name = self._extract_artist_name(track.get('artist', {}))
+            track_name = track.get("name", "Unknown")
+            artist_name = self._extract_artist_name(track.get("artist", {}))
         else:
             # Parse the provided args as song name or "artist - track"
-            args_str = ' '.join(args)
-            if ' - ' in args_str:
-                parts = args_str.split(' - ', 1)
+            args_str = " ".join(args)
+            if " - " in args_str:
+                parts = args_str.split(" - ", 1)
                 artist_name = parts[0].strip()
                 track_name = parts[1].strip()
             else:
@@ -546,19 +608,15 @@ The token expires in 10 minutes.
         spotify_results = await self.spotify.search_track(search_query, limit=10)
         if not spotify_results:
             await self.send_message(
-                room,
-                f"❌ Could not find '{search_query}' on Spotify",
-                client
+                room, f"❌ Could not find '{search_query}' on Spotify", client
             )
             return
 
         # Use fuzzy matching to select the best result
         best_track = self._select_best_spotify_result(spotify_results, search_query)
-        if not best_track or not best_track.get('external_urls', {}).get('spotify'):
+        if not best_track or not best_track.get("external_urls", {}).get("spotify"):
             await self.send_message(
-                room,
-                f"❌ Could not find '{search_query}' on Spotify",
-                client
+                room, f"❌ Could not find '{search_query}' on Spotify", client
             )
             return
 
@@ -569,7 +627,7 @@ The token expires in 10 minutes.
         message = f"🎵 **Spotify Link**\n\n"
         message += f"**{spotify_track['name']}**\n"
         message += f"by *{spotify_track['artist']}*\n"
-        if spotify_track.get('album'):
+        if spotify_track.get("album"):
             message += f"on {spotify_track['album']}\n"
         message += f"\n🔗 [Open on Spotify]({spotify_track['url']})"
 
@@ -581,20 +639,20 @@ The token expires in 10 minutes.
             await self.send_message(
                 room,
                 f"❌ Usage: {self.config.command_prefix}track <artist> - <track>",
-                client
+                client,
             )
             return
 
         # Find the dash separator
         try:
-            dash_idx = args.index('-')
-            artist_name = ' '.join(args[:dash_idx])
-            track_name = ' '.join(args[dash_idx + 1:])
+            dash_idx = args.index("-")
+            artist_name = " ".join(args[:dash_idx])
+            track_name = " ".join(args[dash_idx + 1 :])
         except ValueError:
             await self.send_message(
                 room,
                 f"❌ Usage: {self.config.command_prefix}track <artist> - <track>",
-                client
+                client,
             )
             return
 
@@ -605,24 +663,40 @@ The token expires in 10 minutes.
         if not track_info:
             search_query = f"{artist_name} {track_name}".strip()
             candidates = await self.lastfm.search_track(search_query, limit=10)
-            best_match = self._select_best_lastfm_result(candidates, search_query, 'track')
+            best_match = self._select_best_lastfm_result(
+                candidates, search_query, "track"
+            )
             if best_match:
-                resolved_track = best_match.get('name', track_name)
-                resolved_artist = self._extract_artist_name(best_match.get('artist', {}))
-                track_info = await self.lastfm.get_track_info(resolved_artist, resolved_track)
+                resolved_track = best_match.get("name", track_name)
+                resolved_artist = self._extract_artist_name(
+                    best_match.get("artist", {})
+                )
+                track_info = await self.lastfm.get_track_info(
+                    resolved_artist, resolved_track
+                )
 
         if not track_info:
-            await self.send_message(room, f"❌ Could not find track: {track_name} by {artist_name}", client)
+            await self.send_message(
+                room, f"❌ Could not find track: {track_name} by {artist_name}", client
+            )
             return
 
-        name = track_info.get('name', 'Unknown')
-        artist = track_info.get('artist', {})
-        artist_name = artist.get('name', 'Unknown') if isinstance(artist, dict) else artist or 'Unknown'
-        listeners = track_info.get('listeners', 'N/A')
-        plays = track_info.get('playcount', 'N/A')
-        tags = track_info.get('toptags', {})
-        tag_list = tags.get('tag', []) if isinstance(tags, dict) else []
-        tag_str = ', '.join([t.get('name', '') for t in tag_list[:5]]) if tag_list else 'No tags'
+        name = track_info.get("name", "Unknown")
+        artist = track_info.get("artist", {})
+        artist_name = (
+            artist.get("name", "Unknown")
+            if isinstance(artist, dict)
+            else artist or "Unknown"
+        )
+        listeners = track_info.get("listeners", "N/A")
+        plays = track_info.get("playcount", "N/A")
+        tags = track_info.get("toptags", {})
+        tag_list = tags.get("tag", []) if isinstance(tags, dict) else []
+        tag_str = (
+            ", ".join([t.get("name", "") for t in tag_list[:5]])
+            if tag_list
+            else "No tags"
+        )
 
         message = f"🎵 **Track Info: {name}**\n\n"
         if resolved_artist != artist_name or resolved_track != track_name:
@@ -634,7 +708,9 @@ The token expires in 10 minutes.
 
         await self.send_message(room, message, client)
 
-    async def show_loved_tracks(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def show_loved_tracks(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show user's loved tracks."""
         target_user = await self._get_target_user(room, sender, client, args)
         if not target_user:
@@ -646,61 +722,69 @@ The token expires in 10 minutes.
 
         tracks = await self.lastfm.get_user_loved_tracks(target_user, limit=limit)
         if not tracks:
-            await self.send_message(room, f"❌ Could not fetch loved tracks for {target_user}", client)
+            await self.send_message(
+                room, f"❌ Could not fetch loved tracks for {target_user}", client
+            )
             return
 
         message = f"❤️ **Loved Tracks - {target_user}**\n\n"
 
         for i, track in enumerate(tracks, 1):
-            name = track.get('name', 'Unknown')
-            artist_name = self._extract_artist_name(track.get('artist', {}))
+            name = track.get("name", "Unknown")
+            artist_name = self._extract_artist_name(track.get("artist", {}))
             message += f"{i}. {name} by {artist_name}\n"
 
         await self.send_message(room, message, client)
 
-    async def love_track_command(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def love_track_command(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Love a track (requires session key)."""
         logger.info(f"love_track_command called with args: {args}")
         if len(args) < 1:
             await self.send_message(
                 room,
                 f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track> or {self.config.command_prefix}fm love <song>",
-                client
+                client,
             )
             return
 
-        artist_name = ''
-        track_name = ''
-        if '-' in args:
+        artist_name = ""
+        track_name = ""
+        if "-" in args:
             try:
-                dash_idx = args.index('-')
-                artist_name = ' '.join(args[:dash_idx])
-                track_name = ' '.join(args[dash_idx + 1:])
+                dash_idx = args.index("-")
+                artist_name = " ".join(args[:dash_idx])
+                track_name = " ".join(args[dash_idx + 1 :])
                 logger.info(f"Parsed: artist='{artist_name}', track='{track_name}'")
             except ValueError:
                 await self.send_message(
                     room,
                     f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track> or {self.config.command_prefix}fm love <song>",
-                    client
+                    client,
                 )
                 return
         else:
-            query = ' '.join(args).strip()
+            query = " ".join(args).strip()
             if not query:
                 await self.send_message(
                     room,
                     f"❌ Usage: {self.config.command_prefix}fm love <artist> - <track> or {self.config.command_prefix}fm love <song>",
-                    client
+                    client,
                 )
                 return
             candidates = await self.lastfm.search_track(query, limit=10)
-            best_match = self._select_best_lastfm_result(candidates, query, 'track')
+            best_match = self._select_best_lastfm_result(candidates, query, "track")
             if not best_match:
-                await self.send_message(room, f"❌ Could not find a track matching '{query}'", client)
+                await self.send_message(
+                    room, f"❌ Could not find a track matching '{query}'", client
+                )
                 return
-            track_name = best_match.get('name', query)
-            artist_name = self._extract_artist_name(best_match.get('artist', {}))
-            logger.info(f"Resolved from query: artist='{artist_name}', track='{track_name}'")
+            track_name = best_match.get("name", query)
+            artist_name = self._extract_artist_name(best_match.get("artist", {}))
+            logger.info(
+                f"Resolved from query: artist='{artist_name}', track='{track_name}'"
+            )
 
         # Get session key
         session_key = await self.db.get_lastfm_session_key(sender)
@@ -709,12 +793,14 @@ The token expires in 10 minutes.
             await self.send_message(
                 room,
                 f"❌ You don't have a Last.fm session key. This feature requires Last.fm authentication.",
-                client
+                client,
             )
             return
 
         # Love the track
-        logger.info(f"Calling love_track with artist='{artist_name}', track='{track_name}', session_key=***")
+        logger.info(
+            f"Calling love_track with artist='{artist_name}', track='{track_name}', session_key=***"
+        )
         success = await self.lastfm.love_track(artist_name, track_name, session_key)
         resolved_artist = artist_name
         resolved_track = track_name
@@ -722,58 +808,62 @@ The token expires in 10 minutes.
         if not success:
             search_query = f"{artist_name} {track_name}".strip()
             candidates = await self.lastfm.search_track(search_query, limit=10)
-            best_match = self._select_best_lastfm_result(candidates, search_query, 'track')
+            best_match = self._select_best_lastfm_result(
+                candidates, search_query, "track"
+            )
             if best_match:
-                resolved_track = best_match.get('name', track_name)
-                resolved_artist = self._extract_artist_name(best_match.get('artist', {}))
+                resolved_track = best_match.get("name", track_name)
+                resolved_artist = self._extract_artist_name(
+                    best_match.get("artist", {})
+                )
                 if resolved_artist != artist_name or resolved_track != track_name:
                     logger.info(
                         f"Retrying love_track with closest match artist='{resolved_artist}', track='{resolved_track}'"
                     )
-                    success = await self.lastfm.love_track(resolved_artist, resolved_track, session_key)
+                    success = await self.lastfm.love_track(
+                        resolved_artist, resolved_track, session_key
+                    )
 
         if success:
             if resolved_artist != artist_name or resolved_track != track_name:
                 await self.send_message(
                     room,
                     f"❤️ Loved closest match: **{resolved_track}** by {resolved_artist}",
-                    client
+                    client,
                 )
             else:
                 await self.send_message(
-                    room,
-                    f"❤️ Loved: **{track_name}** by {artist_name}",
-                    client
+                    room, f"❤️ Loved: **{track_name}** by {artist_name}", client
                 )
         else:
             await self.send_message(
-                room,
-                f"❌ Failed to love track: {track_name} by {artist_name}",
-                client
+                room, f"❌ Failed to love track: {track_name} by {artist_name}", client
             )
 
-    async def unlove_track_command(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def unlove_track_command(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Unlove a track (requires session key)."""
         logger.info(f"unlove_track_command called with args: {args}")
         if len(args) < 2:
             await self.send_message(
                 room,
                 f"❌ Usage: {self.config.command_prefix}fm unlove <artist> - <track>",
-                client
+                client,
             )
             return
 
         # Find the dash separator
         try:
-            dash_idx = args.index('-')
-            artist_name = ' '.join(args[:dash_idx])
-            track_name = ' '.join(args[dash_idx + 1:])
+            dash_idx = args.index("-")
+            artist_name = " ".join(args[:dash_idx])
+            track_name = " ".join(args[dash_idx + 1 :])
             logger.info(f"Parsed unlove: artist='{artist_name}', track='{track_name}'")
         except ValueError:
             await self.send_message(
                 room,
                 f"❌ Usage: {self.config.command_prefix}fm unlove <artist> - <track>",
-                client
+                client,
             )
             return
 
@@ -784,29 +874,29 @@ The token expires in 10 minutes.
             await self.send_message(
                 room,
                 f"❌ You don't have a Last.fm session key. This feature requires Last.fm authentication.",
-                client
+                client,
             )
             return
 
         # Unlove the track
-        logger.info(f"Calling unlove_track with artist='{artist_name}', track='{track_name}', session_key=***")
+        logger.info(
+            f"Calling unlove_track with artist='{artist_name}', track='{track_name}', session_key=***"
+        )
         success = await self.lastfm.unlove_track(artist_name, track_name, session_key)
         if success:
             await self.send_message(
-                room,
-                f"💔 Unloved: **{track_name}** by {artist_name}",
-                client
+                room, f"💔 Unloved: **{track_name}** by {artist_name}", client
             )
         else:
             await self.send_message(
                 room,
                 f"❌ Failed to unlove track: {track_name} by {artist_name}",
-                client
+                client,
             )
 
     async def show_leaderboard(self, room: MatrixRoom, args: list, client: AsyncClient):
         """Show leaderboard of room members' Last.fm stats."""
-        stat_type = args[0] if args else 'playcounts'
+        stat_type = args[0] if args else "playcounts"
 
         # Get all room members
         room_members = list(room.users.keys())
@@ -817,7 +907,9 @@ The token expires in 10 minutes.
         # Get Last.fm usernames for all members
         user_mapping = await self.db.get_all_users_in_room(room.room_id, room_members)
         if not user_mapping:
-            await self.send_message(room, "❌ No one in this room has linked a Last.fm account", client)
+            await self.send_message(
+                room, "❌ No one in this room has linked a Last.fm account", client
+            )
             return
 
         # Fetch stats
@@ -825,102 +917,121 @@ The token expires in 10 minutes.
         for matrix_user, lastfm_user in user_mapping.items():
             stats = await self.lastfm.get_user_stats(lastfm_user)
             if stats:
-                leaderboard_data.append({
-                    'lastfm': lastfm_user,
-                    'stats': stats
-                })
+                leaderboard_data.append({"lastfm": lastfm_user, "stats": stats})
 
         if not leaderboard_data:
             await self.send_message(room, "❌ Could not fetch stats", client)
             return
 
         # Sort by stat type
-        if stat_type == 'playcounts':
-            leaderboard_data.sort(key=lambda x: x['stats']['play_count'], reverse=True)
+        if stat_type == "playcounts":
+            leaderboard_data.sort(key=lambda x: x["stats"]["play_count"], reverse=True)
             stat_display = "Scrobbles"
-            stat_key = 'play_count'
-        elif stat_type == 'artistcount':
-            leaderboard_data.sort(key=lambda x: x['stats']['artist_count'], reverse=True)
+            stat_key = "play_count"
+        elif stat_type == "artistcount":
+            leaderboard_data.sort(
+                key=lambda x: x["stats"]["artist_count"], reverse=True
+            )
             stat_display = "Artists"
-            stat_key = 'artist_count'
-        elif stat_type == 'trackcount':
-            leaderboard_data.sort(key=lambda x: x['stats']['track_count'], reverse=True)
+            stat_key = "artist_count"
+        elif stat_type == "trackcount":
+            leaderboard_data.sort(key=lambda x: x["stats"]["track_count"], reverse=True)
             stat_display = "Tracks"
-            stat_key = 'track_count'
+            stat_key = "track_count"
         else:
-            await self.send_message(room, f"❌ Unknown stat type. Use: playcounts, artistcount, trackcount", client)
+            await self.send_message(
+                room,
+                f"❌ Unknown stat type. Use: playcounts, artistcount, trackcount",
+                client,
+            )
             return
 
         # Build message
         message = f"**🏆 Room Leaderboard - {stat_display}**\n\n"
-        medals = ['🥇', '🥈', '🥉']
+        medals = ["🥇", "🥈", "🥉"]
 
         for i, entry in enumerate(leaderboard_data[:10], 1):
-            medal = medals[i-1] if i <= 3 else f"{i}."
-            username = entry['lastfm']
-            stat_value = entry['stats'][stat_key]
+            medal = medals[i - 1] if i <= 3 else f"{i}."
+            username = entry["lastfm"]
+            stat_value = entry["stats"][stat_key]
             message += f"{medal} {username}: {stat_value:,}\n"
 
         await self.send_message(room, message, client)
 
-    async def _get_now_playing_context(self, room: MatrixRoom, sender: str, client: AsyncClient) -> Optional[Dict[str, str]]:
+    async def _get_now_playing_context(
+        self, room: MatrixRoom, sender: str, client: AsyncClient
+    ) -> Optional[Dict[str, str]]:
         target_user = await self._get_target_user(room, sender, client)
         if not target_user:
             return None
 
         track = await self.lastfm.get_now_playing(target_user)
         if not track:
-            await self.send_message(room, f"❌ Could not fetch now playing track for {target_user}", client)
+            await self.send_message(
+                room, f"❌ Could not fetch now playing track for {target_user}", client
+            )
             return None
 
-        name = track.get('name', '')
-        artist_name = self._extract_artist_name(track.get('artist', {}))
-        album = track.get('album', {})
+        name = track.get("name", "")
+        artist_name = self._extract_artist_name(track.get("artist", {}))
+        album = track.get("album", {})
         if isinstance(album, dict):
-            album_name = album.get('#text') or album.get('text') or ''
+            album_name = album.get("#text") or album.get("text") or ""
         else:
-            album_name = album or ''
+            album_name = album or ""
 
         return {
-            'track': name,
-            'artist': artist_name,
-            'album': album_name,
+            "track": name,
+            "artist": artist_name,
+            "album": album_name,
         }
 
-    async def who_knows(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def who_knows(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show who in the room listens to this artist."""
         if not args:
             now_playing = await self._get_now_playing_context(room, sender, client)
             if not now_playing:
                 return
-            artist_name = now_playing['artist']
+            artist_name = now_playing["artist"]
             if not artist_name:
-                await self.send_message(room, "❌ No artist found for your current track", client)
+                await self.send_message(
+                    room, "❌ No artist found for your current track", client
+                )
                 return
         else:
-            artist_name = ' '.join(args)
+            artist_name = " ".join(args)
         artists = await self.lastfm.search_artist(artist_name, limit=10)
 
         if not artists:
-            await self.send_message(room, f"❌ No artists found matching '{artist_name}'", client)
+            await self.send_message(
+                room, f"❌ No artists found matching '{artist_name}'", client
+            )
             return
 
         # Pick closest + most popular result
-        top_artist = self._select_best_lastfm_result(artists, artist_name, 'artist') or artists[0]
-        artist_name_clean = top_artist.get('name', artist_name)
+        top_artist = (
+            self._select_best_lastfm_result(artists, artist_name, "artist")
+            or artists[0]
+        )
+        artist_name_clean = top_artist.get("name", artist_name)
 
         # Try to get image from search results first (as fallback)
         search_image = None
-        search_image_list = top_artist.get('image', [])
-        placeholder_hashes = ['2a96cbd8b46e442fc41c2b86b821562f']
+        search_image_list = top_artist.get("image", [])
+        placeholder_hashes = ["2a96cbd8b46e442fc41c2b86b821562f"]
 
         if isinstance(search_image_list, list) and len(search_image_list) > 0:
             # Get 'large' size (174s) instead of extralarge for more compact display
             for img in search_image_list:
-                if img.get('size') == 'large':
-                    img_url = img.get('#text', '').strip()
-                    if img_url and '/noimage' not in img_url.lower():
-                        is_placeholder = any(placeholder_hash in img_url for placeholder_hash in placeholder_hashes)
+                if img.get("size") == "large":
+                    img_url = img.get("#text", "").strip()
+                    if img_url and "/noimage" not in img_url.lower():
+                        is_placeholder = any(
+                            placeholder_hash in img_url
+                            for placeholder_hash in placeholder_hashes
+                        )
                         if not is_placeholder:
                             search_image = img_url
                             break
@@ -929,36 +1040,41 @@ The token expires in 10 minutes.
         artist_info = await self.lastfm.get_artist_info(artist_name_clean)
 
         if not artist_info:
-            await self.send_message(room, f"❌ Could not fetch details for {artist_name_clean}", client)
+            await self.send_message(
+                room, f"❌ Could not fetch details for {artist_name_clean}", client
+            )
             return
 
         # Get genre
-        tags = artist_info.get('tags', {})
-        if isinstance(tags, dict) and 'tag' in tags:
-            genre_list = tags['tag']
+        tags = artist_info.get("tags", {})
+        if isinstance(tags, dict) and "tag" in tags:
+            genre_list = tags["tag"]
             if isinstance(genre_list, list):
-                genre = ', '.join([t.get('name', '') for t in genre_list[:3]])
+                genre = ", ".join([t.get("name", "") for t in genre_list[:3]])
             else:
-                genre = genre_list.get('name', 'Unknown')
+                genre = genre_list.get("name", "Unknown")
         else:
-            genre = 'Unknown'
+            genre = "Unknown"
 
         # Get image - extract the extralarge/largest available
         image = None
-        image_list = artist_info.get('image', [])
+        image_list = artist_info.get("image", [])
 
         # Last.fm's known placeholder image hashes to filter out
-        placeholder_hashes = ['2a96cbd8b46e442fc41c2b86b821562f']
+        placeholder_hashes = ["2a96cbd8b46e442fc41c2b86b821562f"]
 
         logger.info(f"Image list for {artist_name_clean}: {image_list}")
 
         if isinstance(image_list, list) and len(image_list) > 0:
             # Get 'large' size (174s) for more compact display
             for img in image_list:
-                if img.get('size') == 'large':
-                    img_url = img.get('#text', '').strip()
-                    if img_url and img_url != '' and '/noimage' not in img_url.lower():
-                        is_placeholder = any(placeholder_hash in img_url for placeholder_hash in placeholder_hashes)
+                if img.get("size") == "large":
+                    img_url = img.get("#text", "").strip()
+                    if img_url and img_url != "" and "/noimage" not in img_url.lower():
+                        is_placeholder = any(
+                            placeholder_hash in img_url
+                            for placeholder_hash in placeholder_hashes
+                        )
                         if not is_placeholder:
                             image = img_url
                             logger.info(f"Found valid image: {image}")
@@ -974,43 +1090,55 @@ The token expires in 10 minutes.
                 logger.info(f"Using image from search results: {image}")
             else:
                 # Try to get image from artist's top album as last resort
-                logger.info(f"Trying to fetch image from top album for {artist_name_clean}")
-                top_albums = await self.lastfm.get_artist_top_albums(artist_name_clean, limit=1)
+                logger.info(
+                    f"Trying to fetch image from top album for {artist_name_clean}"
+                )
+                top_albums = await self.lastfm.get_artist_top_albums(
+                    artist_name_clean, limit=1
+                )
                 if top_albums and len(top_albums) > 0:
-                    album_image_list = top_albums[0].get('image', [])
+                    album_image_list = top_albums[0].get("image", [])
                     if isinstance(album_image_list, list):
                         for img in album_image_list:
-                            if img.get('size') == 'large':
-                                img_url = img.get('#text', '').strip()
-                                if img_url and '/noimage' not in img_url.lower():
-                                    is_placeholder = any(h in img_url for h in placeholder_hashes)
+                            if img.get("size") == "large":
+                                img_url = img.get("#text", "").strip()
+                                if img_url and "/noimage" not in img_url.lower():
+                                    is_placeholder = any(
+                                        h in img_url for h in placeholder_hashes
+                                    )
                                     if not is_placeholder:
                                         image = img_url
-                                        logger.info(f"Using image from top album: {image}")
+                                        logger.info(
+                                            f"Using image from top album: {image}"
+                                        )
                                         break
 
                 if not image:
-                    logger.info(f"No valid image available for {artist_name_clean} at all")
+                    logger.info(
+                        f"No valid image available for {artist_name_clean} at all"
+                    )
 
         # Get artist listeners and stats
-        listeners = artist_info.get('stats', {}).get('listeners', 'N/A')
-        scrobbles = artist_info.get('stats', {}).get('playcount', 'N/A')
+        listeners = artist_info.get("stats", {}).get("listeners", "N/A")
+        scrobbles = artist_info.get("stats", {}).get("playcount", "N/A")
 
         # Format numbers safely
         try:
-            listeners_formatted = f"{int(listeners):,}" if listeners != 'N/A' else 'N/A'
+            listeners_formatted = f"{int(listeners):,}" if listeners != "N/A" else "N/A"
         except (ValueError, TypeError):
-            listeners_formatted = 'N/A'
+            listeners_formatted = "N/A"
 
         try:
-            scrobbles_formatted = f"{int(scrobbles):,}" if scrobbles != 'N/A' else 'N/A'
+            scrobbles_formatted = f"{int(scrobbles):,}" if scrobbles != "N/A" else "N/A"
         except (ValueError, TypeError):
-            scrobbles_formatted = 'N/A'
+            scrobbles_formatted = "N/A"
 
         # Build embed with artist leaderboard
         room_members = list(room.users.keys())
         user_mapping = await self.db.get_all_users_in_room(room.room_id, room_members)
-        artist_cache_key = self._normalize_cache_text(artist_name_clean) or artist_name_clean
+        artist_cache_key = (
+            self._normalize_cache_text(artist_name_clean) or artist_name_clean
+        )
 
         # Fetch each user's playcount for this specific artist (with caching)
         room_listeners = []
@@ -1018,38 +1146,47 @@ The token expires in 10 minutes.
             try:
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
-                    lastfm_user, 'artist', artist_cache_key, max_age_hours=1
+                    lastfm_user, "artist", artist_cache_key, max_age_hours=1
                 )
 
                 if cached_playcount is not None:
                     playcount = cached_playcount
-                    logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
+                    logger.debug(
+                        f"Using cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}"
+                    )
                 else:
                     # Get artist info with user's playcount from API
-                    artist_data = await self.lastfm.get_artist_info(artist_name_clean, username=lastfm_user)
-                    if artist_data and 'stats' in artist_data:
-                        user_playcount = artist_data['stats'].get('userplaycount', '0')
+                    artist_data = await self.lastfm.get_artist_info(
+                        artist_name_clean, username=lastfm_user
+                    )
+                    if artist_data and "stats" in artist_data:
+                        user_playcount = artist_data["stats"].get("userplaycount", "0")
                         playcount = int(user_playcount) if user_playcount else 0
                         # Cache the result
-                        await self.db.cache_playcount(lastfm_user, 'artist', artist_cache_key, playcount)
-                        logger.debug(f"Cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}")
+                        await self.db.cache_playcount(
+                            lastfm_user, "artist", artist_cache_key, playcount
+                        )
+                        logger.debug(
+                            f"Cached playcount for {lastfm_user}/{artist_name_clean}: {playcount}"
+                        )
                     else:
                         playcount = 0
 
                 if playcount > 0:
-                    room_listeners.append({
-                        'user': lastfm_user,
-                        'plays': playcount
-                    })
+                    room_listeners.append({"user": lastfm_user, "plays": playcount})
             except Exception as e:
                 logger.error(f"Error fetching artist playcount for {lastfm_user}: {e}")
                 pass
 
-        room_listeners.sort(key=lambda x: x['plays'], reverse=True)
+        room_listeners.sort(key=lambda x: x["plays"], reverse=True)
 
         # Send image as separate message (downloaded from Last.fm and uploaded to Matrix)
         # Only if we have a valid non-placeholder image
-        if image and '/noimage' not in image.lower() and '2a96cbd8b46e442fc41c2b86b821562f' not in image:
+        if (
+            image
+            and "/noimage" not in image.lower()
+            and "2a96cbd8b46e442fc41c2b86b821562f" not in image
+        ):
             logger.info(f"Downloading and uploading image: {image}")
             await self.send_image_message(room, image, artist_name_clean, client)
         else:
@@ -1064,11 +1201,13 @@ The token expires in 10 minutes.
         # Add leaderboard
         if room_listeners:
             html_parts.append("<br/>")
-            medals = ['👑', '🥈', '🥉']
+            medals = ["👑", "🥈", "🥉"]
             for i, listener in enumerate(room_listeners[:5], 1):  # Show top 5 only
-                medal = medals[i-1] if i <= 3 else f"{i}."
+                medal = medals[i - 1] if i <= 3 else f"{i}."
                 user_url = f"https://www.last.fm/user/{listener['user']}"
-                html_parts.append(f"<br/>{medal} <a href='{user_url}'>{listener['user']}</a> · {listener['plays']:,}")
+                html_parts.append(
+                    f"<br/>{medal} <a href='{user_url}'>{listener['user']}</a> · {listener['plays']:,}"
+                )
 
         html = "\n".join(html_parts)
 
@@ -1077,11 +1216,13 @@ The token expires in 10 minutes.
         body_lines = [f"{artist_name_clean} - {artist_url}", genre, ""]
 
         if room_listeners:
-            medals_text = ['👑', '🥈', '🥉']
+            medals_text = ["👑", "🥈", "🥉"]
             for i, listener in enumerate(room_listeners[:5], 1):  # Show top 5 only
-                medal = medals_text[i-1] if i <= 3 else f"{i}."
+                medal = medals_text[i - 1] if i <= 3 else f"{i}."
                 user_url = f"https://www.last.fm/user/{listener['user']}"
-                body_lines.append(f"{medal} {listener['user']} ({user_url}) · {listener['plays']:,}")
+                body_lines.append(
+                    f"{medal} {listener['user']} ({user_url}) · {listener['plays']:,}"
+                )
         body = "\n".join(body_lines)
 
         # Send embed
@@ -1092,11 +1233,13 @@ The token expires in 10 minutes.
                 "msgtype": "m.text",
                 "body": body,
                 "format": "org.matrix.custom.html",
-                "formatted_body": html
-            }
+                "formatted_body": html,
+            },
         )
 
-    async def who_knows_track(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def who_knows_track(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show who in the room listens to this track."""
         if not args:
             now_playing = await self._get_now_playing_context(room, sender, client)
@@ -1104,21 +1247,27 @@ The token expires in 10 minutes.
                 return
             track_query = f"{now_playing['artist']} {now_playing['track']}".strip()
             if not track_query:
-                await self.send_message(room, "❌ No track found for your current listen", client)
+                await self.send_message(
+                    room, "❌ No track found for your current listen", client
+                )
                 return
         else:
-            track_query = ' '.join(args)
+            track_query = " ".join(args)
 
         # Search for the track to get the canonical name
         tracks = await self.lastfm.search_track(track_query, limit=10)
         if not tracks:
-            await self.send_message(room, f"❌ No tracks found matching '{track_query}'", client)
+            await self.send_message(
+                room, f"❌ No tracks found matching '{track_query}'", client
+            )
             return
 
         # Pick closest + most popular result
-        top_track = self._select_best_lastfm_result(tracks, track_query, 'track') or tracks[0]
-        track_name = top_track.get('name', track_query)
-        artist_name = self._extract_artist_name(top_track.get('artist', {}))
+        top_track = (
+            self._select_best_lastfm_result(tracks, track_query, "track") or tracks[0]
+        )
+        track_name = top_track.get("name", track_query)
+        artist_name = self._extract_artist_name(top_track.get("artist", {}))
         track_cache_key = self._normalize_cache_text(track_name) or track_name
         artist_cache_key = self._normalize_cache_text(artist_name) or artist_name
 
@@ -1127,7 +1276,11 @@ The token expires in 10 minutes.
         user_mapping = await self.db.get_all_users_in_room(room.room_id, room_members)
 
         if not user_mapping:
-            await self.send_message(room, "❌ No users in this room have linked their Last.fm accounts", client)
+            await self.send_message(
+                room,
+                "❌ No users in this room have linked their Last.fm accounts",
+                client,
+            )
             return
 
         # Fetch each user's playcount for this specific track (with caching)
@@ -1137,71 +1290,96 @@ The token expires in 10 minutes.
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user,
-                    'track',
+                    "track",
                     track_cache_key,
                     artist_name=artist_cache_key,
-                    max_age_hours=1
+                    max_age_hours=1,
                 )
 
                 if cached_playcount is not None:
                     playcount = cached_playcount
-                    logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
+                    logger.debug(
+                        f"Using cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}"
+                    )
                 else:
                     # Get track info with user's playcount from API
-                    track_data = await self.lastfm.get_track_info(artist_name, track_name, username=lastfm_user)
-                    if track_data and 'userplaycount' in track_data:
-                        playcount = int(track_data['userplaycount']) if track_data['userplaycount'] else 0
+                    track_data = await self.lastfm.get_track_info(
+                        artist_name, track_name, username=lastfm_user
+                    )
+                    if track_data and "userplaycount" in track_data:
+                        playcount = (
+                            int(track_data["userplaycount"])
+                            if track_data["userplaycount"]
+                            else 0
+                        )
                         # Cache the result
                         await self.db.cache_playcount(
                             lastfm_user,
-                            'track',
+                            "track",
                             track_cache_key,
                             playcount,
-                            artist_name=artist_cache_key
+                            artist_name=artist_cache_key,
                         )
-                        logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}")
+                        logger.debug(
+                            f"Cached playcount for {lastfm_user}/{artist_name}/{track_name}: {playcount}"
+                        )
                     else:
                         playcount = 0
 
                 if playcount > 0:
-                    room_listeners.append({
-                        'user': lastfm_user,
-                        'track': track_name,
-                        'artist': artist_name,
-                        'plays': playcount
-                    })
+                    room_listeners.append(
+                        {
+                            "user": lastfm_user,
+                            "track": track_name,
+                            "artist": artist_name,
+                            "plays": playcount,
+                        }
+                    )
             except Exception as e:
                 logger.error(f"Error fetching track playcount for {lastfm_user}: {e}")
                 pass
 
         if not room_listeners:
-            await self.send_message(room, f"❌ No one in this room has listened to '{track_name}' by {artist_name}", client)
+            await self.send_message(
+                room,
+                f"❌ No one in this room has listened to '{track_name}' by {artist_name}",
+                client,
+            )
             return
 
         # Sort by plays
-        room_listeners.sort(key=lambda x: x['plays'], reverse=True)
+        room_listeners.sort(key=lambda x: x["plays"], reverse=True)
 
         # Build HTML message
         html_parts = []
         first_listener = room_listeners[0]
         track_url = f"https://www.last.fm/music/{first_listener['artist'].replace(' ', '+')}/_/{first_listener['track'].replace(' ', '+')}"
-        html_parts.append(f"<b><a href='{track_url}'>{first_listener['track']}</a></b> by {first_listener['artist']}")
+        html_parts.append(
+            f"<b><a href='{track_url}'>{first_listener['track']}</a></b> by {first_listener['artist']}"
+        )
         html_parts.append("<br/>")
 
-        medals = ['👑', '🥈', '🥉']
+        medals = ["👑", "🥈", "🥉"]
         for i, listener in enumerate(room_listeners[:5], 1):
-            medal = medals[i-1] if i <= 3 else f"{i}."
+            medal = medals[i - 1] if i <= 3 else f"{i}."
             user_url = f"https://www.last.fm/user/{listener['user']}"
-            html_parts.append(f"<br/>{medal} <a href='{user_url}'>{listener['user']}</a> · {listener['plays']:,}")
+            html_parts.append(
+                f"<br/>{medal} <a href='{user_url}'>{listener['user']}</a> · {listener['plays']:,}"
+            )
 
         html = "\n".join(html_parts)
 
         # Build plain text version
-        body_lines = [f"{first_listener['track']} by {first_listener['artist']} - {track_url}", ""]
+        body_lines = [
+            f"{first_listener['track']} by {first_listener['artist']} - {track_url}",
+            "",
+        ]
         for i, listener in enumerate(room_listeners[:5], 1):
-            medal = medals[i-1] if i <= 3 else f"{i}."
+            medal = medals[i - 1] if i <= 3 else f"{i}."
             user_url = f"https://www.last.fm/user/{listener['user']}"
-            body_lines.append(f"{medal} {listener['user']} ({user_url}) · {listener['plays']:,}")
+            body_lines.append(
+                f"{medal} {listener['user']} ({user_url}) · {listener['plays']:,}"
+            )
         body = "\n".join(body_lines)
 
         await client.room_send(
@@ -1211,37 +1389,52 @@ The token expires in 10 minutes.
                 "msgtype": "m.text",
                 "body": body,
                 "format": "org.matrix.custom.html",
-                "formatted_body": html
-            }
+                "formatted_body": html,
+            },
         )
 
-    async def who_knows_album(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def who_knows_album(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Show who in the room listens to this album."""
         if not args:
             now_playing = await self._get_now_playing_context(room, sender, client)
             if not now_playing:
                 return
-            album_name = now_playing['album']
-            artist_name = now_playing['artist']
+            album_name = now_playing["album"]
+            artist_name = now_playing["artist"]
             if not album_name:
-                await self.send_message(room, "❌ No album found for your current track", client)
+                await self.send_message(
+                    room, "❌ No album found for your current track", client
+                )
                 return
             if not artist_name:
-                await self.send_message(room, "❌ No artist found for your current track", client)
+                await self.send_message(
+                    room, "❌ No artist found for your current track", client
+                )
                 return
         else:
-            album_query = ' '.join(args)
+            album_query = " ".join(args)
 
             # Search for the album to get the canonical name
             albums = await self.lastfm.search_album(album_query, limit=10)
             if not albums:
-                await self.send_message(room, f"❌ No albums found matching '{album_query}'", client)
+                await self.send_message(
+                    room, f"❌ No albums found matching '{album_query}'", client
+                )
                 return
 
             # Pick closest + most popular result
-            top_album = self._select_best_lastfm_result(albums, album_query, 'album') or albums[0]
-            album_name = top_album.get('name', album_query)
-            artist_name = self._extract_artist_name(top_album.get('artist', {})) if 'artist' in top_album else top_album.get('artist', 'Unknown')
+            top_album = (
+                self._select_best_lastfm_result(albums, album_query, "album")
+                or albums[0]
+            )
+            album_name = top_album.get("name", album_query)
+            artist_name = (
+                self._extract_artist_name(top_album.get("artist", {}))
+                if "artist" in top_album
+                else top_album.get("artist", "Unknown")
+            )
         album_cache_key = self._normalize_cache_text(album_name) or album_name
         artist_cache_key = self._normalize_cache_text(artist_name) or artist_name
 
@@ -1250,7 +1443,11 @@ The token expires in 10 minutes.
         user_mapping = await self.db.get_all_users_in_room(room.room_id, room_members)
 
         if not user_mapping:
-            await self.send_message(room, "❌ No users in this room have linked their Last.fm accounts", client)
+            await self.send_message(
+                room,
+                "❌ No users in this room have linked their Last.fm accounts",
+                client,
+            )
             return
 
         # Fetch each user's playcount for this specific album (with caching)
@@ -1260,71 +1457,96 @@ The token expires in 10 minutes.
                 # Check cache first
                 cached_playcount = await self.db.get_cached_playcount(
                     lastfm_user,
-                    'album',
+                    "album",
                     album_cache_key,
                     artist_name=artist_cache_key,
-                    max_age_hours=1
+                    max_age_hours=1,
                 )
 
                 if cached_playcount is not None:
                     playcount = cached_playcount
-                    logger.debug(f"Using cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
+                    logger.debug(
+                        f"Using cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}"
+                    )
                 else:
                     # Get album info with user's playcount from API
-                    album_data = await self.lastfm.get_album_info(artist_name, album_name, username=lastfm_user)
-                    if album_data and 'userplaycount' in album_data:
-                        playcount = int(album_data['userplaycount']) if album_data['userplaycount'] else 0
+                    album_data = await self.lastfm.get_album_info(
+                        artist_name, album_name, username=lastfm_user
+                    )
+                    if album_data and "userplaycount" in album_data:
+                        playcount = (
+                            int(album_data["userplaycount"])
+                            if album_data["userplaycount"]
+                            else 0
+                        )
                         # Cache the result
                         await self.db.cache_playcount(
                             lastfm_user,
-                            'album',
+                            "album",
                             album_cache_key,
                             playcount,
-                            artist_name=artist_cache_key
+                            artist_name=artist_cache_key,
                         )
-                        logger.debug(f"Cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}")
+                        logger.debug(
+                            f"Cached playcount for {lastfm_user}/{artist_name}/{album_name}: {playcount}"
+                        )
                     else:
                         playcount = 0
 
                 if playcount > 0:
-                    room_listeners.append({
-                        'user': lastfm_user,
-                        'album': album_name,
-                        'artist': artist_name,
-                        'plays': playcount
-                    })
+                    room_listeners.append(
+                        {
+                            "user": lastfm_user,
+                            "album": album_name,
+                            "artist": artist_name,
+                            "plays": playcount,
+                        }
+                    )
             except Exception as e:
                 logger.error(f"Error fetching album playcount for {lastfm_user}: {e}")
                 pass
 
         if not room_listeners:
-            await self.send_message(room, f"❌ No one in this room has listened to '{album_name}' by {artist_name}", client)
+            await self.send_message(
+                room,
+                f"❌ No one in this room has listened to '{album_name}' by {artist_name}",
+                client,
+            )
             return
 
         # Sort by plays
-        room_listeners.sort(key=lambda x: x['plays'], reverse=True)
+        room_listeners.sort(key=lambda x: x["plays"], reverse=True)
 
         # Build HTML message
         html_parts = []
         first_listener = room_listeners[0]
         album_url = f"https://www.last.fm/music/{first_listener['artist'].replace(' ', '+')}/_/{first_listener['album'].replace(' ', '+')}"
-        html_parts.append(f"<b><a href='{album_url}'>{first_listener['album']}</a></b> by {first_listener['artist']}")
+        html_parts.append(
+            f"<b><a href='{album_url}'>{first_listener['album']}</a></b> by {first_listener['artist']}"
+        )
         html_parts.append("<br/>")
 
-        medals = ['👑', '🥈', '🥉']
+        medals = ["👑", "🥈", "🥉"]
         for i, listener in enumerate(room_listeners[:5], 1):
-            medal = medals[i-1] if i <= 3 else f"{i}."
+            medal = medals[i - 1] if i <= 3 else f"{i}."
             user_url = f"https://www.last.fm/user/{listener['user']}"
-            html_parts.append(f"<br/>{medal} <a href='{user_url}'>{listener['user']}</a> · {listener['plays']:,}")
+            html_parts.append(
+                f"<br/>{medal} <a href='{user_url}'>{listener['user']}</a> · {listener['plays']:,}"
+            )
 
         html = "\n".join(html_parts)
 
         # Build plain text version
-        body_lines = [f"{first_listener['album']} by {first_listener['artist']} - {album_url}", ""]
+        body_lines = [
+            f"{first_listener['album']} by {first_listener['artist']} - {album_url}",
+            "",
+        ]
         for i, listener in enumerate(room_listeners[:5], 1):
-            medal = medals[i-1] if i <= 3 else f"{i}."
+            medal = medals[i - 1] if i <= 3 else f"{i}."
             user_url = f"https://www.last.fm/user/{listener['user']}"
-            body_lines.append(f"{medal} {listener['user']} ({user_url}) · {listener['plays']:,}")
+            body_lines.append(
+                f"{medal} {listener['user']} ({user_url}) · {listener['plays']:,}"
+            )
         body = "\n".join(body_lines)
 
         await client.room_send(
@@ -1334,48 +1556,56 @@ The token expires in 10 minutes.
                 "msgtype": "m.text",
                 "body": body,
                 "format": "org.matrix.custom.html",
-                "formatted_body": html
-            }
+                "formatted_body": html,
+            },
         )
 
-    async def generate_chart(self, room: MatrixRoom, sender: str, args: list, client: AsyncClient):
+    async def generate_chart(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
         """Generate a collage chart of top albums."""
         # Parse arguments: size, period, and flags
-        size = '3x3'
-        period = '7days'
+        size = "3x3"
+        period = "7days"
         skip_empty = False
         show_titles = True
 
         # Filter out flags
         filtered_args = []
         for arg in args:
-            if arg.lower() in ['--skipempty', '--skip-empty', '-s']:
+            if arg.lower() in ["--skipempty", "--skip-empty", "-s"]:
                 skip_empty = True
-            elif arg.lower() in ['--notitles', '--no-titles', '--notitle', '-n']:
+            elif arg.lower() in ["--notitles", "--no-titles", "--notitle", "-n"]:
                 show_titles = False
             else:
                 filtered_args.append(arg)
 
         if filtered_args:
             # Check if first arg is a size (NxN format)
-            if 'x' in filtered_args[0].lower():
+            if "x" in filtered_args[0].lower():
                 size = filtered_args[0].lower()
                 if len(filtered_args) > 1:
                     period = self.normalize_period(filtered_args[1])
             else:
                 # First arg is period
                 period = self.normalize_period(filtered_args[0])
-                if len(filtered_args) > 1 and 'x' in filtered_args[1].lower():
+                if len(filtered_args) > 1 and "x" in filtered_args[1].lower():
                     size = filtered_args[1].lower()
 
         # Validate size
         try:
-            rows, cols = map(int, size.split('x'))
+            rows, cols = map(int, size.split("x"))
             if rows < 2 or rows > 10 or cols < 2 or cols > 10:
-                await self.send_message(room, "❌ Chart size must be between 2x2 and 10x10", client)
+                await self.send_message(
+                    room, "❌ Chart size must be between 2x2 and 10x10", client
+                )
                 return
         except:
-            await self.send_message(room, f"❌ Invalid size format '{size}'. Use format like 3x3, 4x4, 5x5", client)
+            await self.send_message(
+                room,
+                f"❌ Invalid size format '{size}'. Use format like 3x3, 4x4, 5x5",
+                client,
+            )
             return
 
         # Validate period
@@ -1387,21 +1617,29 @@ The token expires in 10 minutes.
         if not lastfm_user:
             return
 
-        await self.send_message(room, f"⏳ Generating {size} chart for {lastfm_user}...", client)
+        await self.send_message(
+            room, f"⏳ Generating {size} chart for {lastfm_user}...", client
+        )
 
         # Fetch top albums
         total_albums = rows * cols
-        albums = await self.lastfm.get_top_albums(lastfm_user, period, limit=total_albums)
+        albums = await self.lastfm.get_top_albums(
+            lastfm_user, period, limit=total_albums
+        )
 
         if not albums:
-            await self.send_message(room, f"❌ No albums found for {lastfm_user} in this period", client)
+            await self.send_message(
+                room, f"❌ No albums found for {lastfm_user} in this period", client
+            )
             return
 
         cyrillic_needed = False
         for album in albums:
-            album_name = album.get('name', '') or ''
-            artist_name = self._extract_artist_name(album.get('artist', {}))
-            if self._contains_cyrillic(album_name) or self._contains_cyrillic(artist_name):
+            album_name = album.get("name", "") or ""
+            artist_name = self._extract_artist_name(album.get("artist", {}))
+            if self._contains_cyrillic(album_name) or self._contains_cyrillic(
+                artist_name
+            ):
                 cyrillic_needed = True
                 break
 
@@ -1415,27 +1653,31 @@ The token expires in 10 minutes.
                 break
 
             image_url = None
-            album_name = album.get('name', 'Unknown')
-            artist_name = self._extract_artist_name(album.get('artist', {}))
+            album_name = album.get("name", "Unknown")
+            artist_name = self._extract_artist_name(album.get("artist", {}))
 
             # Get extralarge image (300x300)
-            album_images = album.get('image', [])
+            album_images = album.get("image", [])
             if isinstance(album_images, list):
                 for img in album_images:
-                    if img.get('size') == 'extralarge':
-                        url = img.get('#text', '').strip()
-                        if url and '/noimage' not in url.lower():
+                    if img.get("size") == "extralarge":
+                        url = img.get("#text", "").strip()
+                        if url and "/noimage" not in url.lower():
                             image_url = url
                             break
 
             # Download image
             if image_url:
                 try:
-                    async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    async with session.get(
+                        image_url, timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
                         if resp.status == 200:
                             image_data = await resp.read()
                             img = Image.open(BytesIO(image_data))
-                            img = img.resize((tile_size, tile_size), Image.Resampling.LANCZOS)
+                            img = img.resize(
+                                (tile_size, tile_size), Image.Resampling.LANCZOS
+                            )
                             album_tiles.append((img, album_name, artist_name, True))
                             continue
                 except Exception as e:
@@ -1445,14 +1687,18 @@ The token expires in 10 minutes.
             if skip_empty:
                 continue
             else:
-                placeholder = Image.new('RGBA', (tile_size, tile_size), color=(0, 0, 0, 0))
+                placeholder = Image.new(
+                    "RGBA", (tile_size, tile_size), color=(0, 0, 0, 0)
+                )
                 album_tiles.append((placeholder, album_name, artist_name, False))
 
         # Pad with placeholders if needed (only if not skipping empty)
         if not skip_empty:
             while len(album_tiles) < total_albums:
-                placeholder = Image.new('RGBA', (tile_size, tile_size), color=(0, 0, 0, 0))
-                album_tiles.append((placeholder, '', '', False))
+                placeholder = Image.new(
+                    "RGBA", (tile_size, tile_size), color=(0, 0, 0, 0)
+                )
+                album_tiles.append((placeholder, "", "", False))
 
         # Adjust grid size if we have fewer items after filtering
         if skip_empty and len(album_tiles) < total_albums:
@@ -1464,7 +1710,9 @@ The token expires in 10 minutes.
         # Create collage
         collage_width = cols * tile_size
         collage_height = rows * tile_size
-        collage = Image.new('RGBA', (collage_width, collage_height), color=(13, 13, 13, 0))
+        collage = Image.new(
+            "RGBA", (collage_width, collage_height), color=(13, 13, 13, 0)
+        )
 
         # Load font for text overlay
         font = self._load_chart_font(14)
@@ -1484,53 +1732,59 @@ The token expires in 10 minutes.
             y = row * tile_size
 
             # Paste the album cover
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
             collage.paste(img, (x, y), img)
 
             # Add text overlay with artist + album (if enabled)
             if show_titles and (album_name or artist_name):
-                self._draw_chart_text(collage, x, y, tile_size, artist_name, album_name, font)
+                self._draw_chart_text(
+                    collage, x, y, tile_size, artist_name, album_name, font
+                )
 
         # Get period name for message
         period_name = self._get_period_name(period)
 
         # Save to BytesIO
         image_buffer = BytesIO()
-        collage.save(image_buffer, format='PNG')
+        collage.save(image_buffer, format="PNG")
         image_buffer.seek(0)
 
         # Upload to Matrix
         try:
             upload_response, _ = await client.upload(
                 image_buffer,
-                content_type='image/png',
-                filename=f'{lastfm_user}_{size}_{period}_chart.png',
-                filesize=len(image_buffer.getvalue())
+                content_type="image/png",
+                filename=f"{lastfm_user}_{size}_{period}_chart.png",
+                filesize=len(image_buffer.getvalue()),
             )
 
             if isinstance(upload_response, UploadResponse):
                 await client.room_send(
                     room_id=room.room_id,
-                    message_type='m.room.message',
+                    message_type="m.room.message",
                     content={
-                        'msgtype': 'm.image',
-                        'body': f'{size} {period_name} chart for {lastfm_user}',
-                        'url': upload_response.content_uri,
-                        'info': {
-                            'mimetype': 'image/png',
-                            'size': len(image_buffer.getvalue()),
-                            'w': collage_width,
-                            'h': collage_height
-                        }
-                    }
+                        "msgtype": "m.image",
+                        "body": f"{size} {period_name} chart for {lastfm_user}",
+                        "url": upload_response.content_uri,
+                        "info": {
+                            "mimetype": "image/png",
+                            "size": len(image_buffer.getvalue()),
+                            "w": collage_width,
+                            "h": collage_height,
+                        },
+                    },
                 )
                 logger.info(f"Chart sent successfully for {lastfm_user}")
             else:
-                await self.send_message(room, f"❌ Failed to upload chart image", client)
+                await self.send_message(
+                    room, f"❌ Failed to upload chart image", client
+                )
                 logger.error(f"Upload failed: {upload_response}")
         except Exception as e:
-            await self.send_message(room, f"❌ Error generating chart: {str(e)}", client)
+            await self.send_message(
+                room, f"❌ Error generating chart: {str(e)}", client
+            )
             logger.error(f"Chart generation error: {e}", exc_info=True)
 
     async def send_message(self, room: MatrixRoom, message: str, client: AsyncClient):
@@ -1542,14 +1796,21 @@ The token expires in 10 minutes.
                 "msgtype": "m.text",
                 "body": message,
                 "format": "org.matrix.custom.html",
-                "formatted_body": self._markdown_to_html(message)
-            }
+                "formatted_body": self._markdown_to_html(message),
+            },
         )
-        return response.event_id if hasattr(response, 'event_id') else None
+        return response.event_id if hasattr(response, "event_id") else None
 
-    async def send_paginated_message(self, room: MatrixRoom, message: str, client: AsyncClient,
-                                     user_id: str, current_page: int, total_pages: int,
-                                     callback: Callable) -> Optional[str]:
+    async def send_paginated_message(
+        self,
+        room: MatrixRoom,
+        message: str,
+        client: AsyncClient,
+        user_id: str,
+        current_page: int,
+        total_pages: int,
+        callback: Callable,
+    ) -> Optional[str]:
         """Send a message with pagination support."""
         event_id = await self.send_message(room, message, client)
         logger.debug(f"Sent message with event_id: {event_id}")
@@ -1559,11 +1820,16 @@ The token expires in 10 minutes.
                 f"Registering pagination for event {event_id}: page {current_page}/{total_pages}, user {user_id}"
             )
             # Register pagination
-            self.pagination.register(event_id, room.room_id, user_id, current_page, total_pages, callback)
-            logger.debug(f"Pagination registered. Active paginations: {list(self.pagination.paginations.keys())}")
+            self.pagination.register(
+                event_id, room.room_id, user_id, current_page, total_pages, callback
+            )
+            logger.debug(
+                f"Pagination registered. Active paginations: {list(self.pagination.paginations.keys())}"
+            )
 
             # Add initial reaction arrows so users know they can click
             import asyncio
+
             await asyncio.sleep(0.1)  # Small delay to ensure message is processed
 
             logger.debug(f"Adding ⬅️ reaction to {event_id}")
@@ -1574,9 +1840,9 @@ The token expires in 10 minutes.
                     "m.relates_to": {
                         "rel_type": "m.annotation",
                         "event_id": event_id,
-                        "key": "⬅️"
+                        "key": "⬅️",
                     }
-                }
+                },
             )
 
             logger.debug(f"Adding ➡️ reaction to {event_id}")
@@ -1587,17 +1853,21 @@ The token expires in 10 minutes.
                     "m.relates_to": {
                         "rel_type": "m.annotation",
                         "event_id": event_id,
-                        "key": "➡️"
+                        "key": "➡️",
                     }
-                }
+                },
             )
             logger.debug(f"Initial reactions added to {event_id}")
         else:
-            logger.debug(f"Not adding pagination - event_id: {event_id}, total_pages: {total_pages}")
+            logger.debug(
+                f"Not adding pagination - event_id: {event_id}, total_pages: {total_pages}"
+            )
 
         return event_id
 
-    async def edit_message(self, room: MatrixRoom, event_id: str, new_message: str, client: AsyncClient):
+    async def edit_message(
+        self, room: MatrixRoom, event_id: str, new_message: str, client: AsyncClient
+    ):
         """Edit an existing message and keep user reactions."""
         logger.info(f"Editing message {event_id}")
 
@@ -1614,40 +1884,50 @@ The token expires in 10 minutes.
                     "msgtype": "m.text",
                     "body": new_message,
                     "format": "org.matrix.custom.html",
-                    "formatted_body": self._markdown_to_html(new_message)
+                    "formatted_body": self._markdown_to_html(new_message),
                 },
-                "m.relates_to": {
-                    "rel_type": "m.replace",
-                    "event_id": event_id
-                }
-            }
+                "m.relates_to": {"rel_type": "m.replace", "event_id": event_id},
+            },
         )
         logger.info(f"Message edited successfully")
 
-    async def send_image_message(self, room: MatrixRoom, image_url: str, artist_name: str, client: AsyncClient):
+    async def send_image_message(
+        self, room: MatrixRoom, image_url: str, artist_name: str, client: AsyncClient
+    ):
         """Download image from Last.fm and upload to Matrix, then send."""
         try:
             # Download the image
             session = await self.lastfm.get_session()
-            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(
+                image_url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
                 if resp.status != 200:
                     logger.error(f"Failed to download image: HTTP {resp.status}")
                     return
 
                 image_data = await resp.read()
-                content_type = resp.headers.get('Content-Type', 'image/png')
+                content_type = resp.headers.get("Content-Type", "image/png")
 
-                logger.info(f"Downloaded image: {len(image_data)} bytes, Content-Type: {content_type}")
+                logger.info(
+                    f"Downloaded image: {len(image_data)} bytes, Content-Type: {content_type}"
+                )
                 logger.info(f"First 50 bytes: {image_data[:50]}")
 
                 # Verify we got actual image data
                 if len(image_data) < 100:
-                    logger.error(f"Image data too small ({len(image_data)} bytes), likely not a valid image")
+                    logger.error(
+                        f"Image data too small ({len(image_data)} bytes), likely not a valid image"
+                    )
                     return
 
                 # Check for PNG or JPEG magic bytes
-                if not (image_data[:8] == b'\x89PNG\r\n\x1a\n' or image_data[:2] == b'\xff\xd8'):
-                    logger.error(f"Invalid image format. Magic bytes: {image_data[:10]}")
+                if not (
+                    image_data[:8] == b"\x89PNG\r\n\x1a\n"
+                    or image_data[:2] == b"\xff\xd8"
+                ):
+                    logger.error(
+                        f"Invalid image format. Magic bytes: {image_data[:10]}"
+                    )
                     return
 
             # Wrap bytes in BytesIO for nio upload
@@ -1662,17 +1942,24 @@ The token expires in 10 minutes.
                 image_file,
                 content_type=content_type,
                 filename=f"{artist_name}.png",
-                filesize=file_size
+                filesize=file_size,
             )
 
-            logger.info(f"Upload response type: {type(upload_response)}, response: {upload_response}")
+            logger.info(
+                f"Upload response type: {type(upload_response)}, response: {upload_response}"
+            )
 
             if isinstance(upload_response, UploadError):
                 logger.error(f"Failed to upload image: {upload_response.message}")
                 return
 
-            if not isinstance(upload_response, UploadResponse) or not upload_response.content_uri:
-                logger.error(f"Failed to upload image to Matrix. Response: {upload_response}")
+            if (
+                not isinstance(upload_response, UploadResponse)
+                or not upload_response.content_uri
+            ):
+                logger.error(
+                    f"Failed to upload image to Matrix. Response: {upload_response}"
+                )
                 return
 
             # Send the image message with mxc:// URI
@@ -1685,10 +1972,12 @@ The token expires in 10 minutes.
                     "body": f"{artist_name}.png",
                     "info": {
                         "mimetype": content_type,
-                    }
-                }
+                    },
+                },
             )
-            logger.info(f"Successfully uploaded and sent image: {upload_response.content_uri}")
+            logger.info(
+                f"Successfully uploaded and sent image: {upload_response.content_uri}"
+            )
 
         except Exception as e:
             logger.error(f"Error sending image: {e}", exc_info=True)
@@ -1697,13 +1986,13 @@ The token expires in 10 minutes.
     def _markdown_to_html(text: str) -> str:
         """Convert basic markdown to HTML."""
         # Links - must be before bold/italic to avoid conflicts
-        text = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', text)
+        text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', text)
         # Bold
-        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
         # Italic
-        text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
+        text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
         # Code
-        text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
+        text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
         # Newlines
-        text = text.replace('\n', '<br/>')
+        text = text.replace("\n", "<br/>")
         return text
