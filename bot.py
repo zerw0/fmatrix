@@ -9,16 +9,23 @@ from typing import Optional
 
 import aiohttp
 import certifi
-
-from nio import AsyncClient, AsyncClientConfig, RoomMessage, MatrixRoom, InviteEvent, ReactionEvent
+from nio import (
+    AsyncClient,
+    AsyncClientConfig,
+    InviteEvent,
+    MatrixRoom,
+    ReactionEvent,
+    RoomMessage,
+)
 from nio.responses import LoginResponse, SyncResponse
 
+from bot_commands import CommandHandler
 from config import Config
 from database import Database
-from lastfm_client import LastfmClient
 from discogs_client import DiscogsClient
+from lastfm_client import LastfmClient
+from lyrics_client import LyricsClient
 from spotify_client import SpotifyClient
-from bot_commands import CommandHandler
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +38,7 @@ class FMatrixBot:
         self.client: Optional[AsyncClient] = None
         self.db: Optional[Database] = None
         self.lastfm = LastfmClient(
-            self.config.lastfm_api_key,
-            self.config.lastfm_api_secret
+            self.config.lastfm_api_key, self.config.lastfm_api_secret
         )
         self.discogs = None
         if self.config.discogs_user_token:
@@ -40,9 +46,9 @@ class FMatrixBot:
         self.spotify = None
         if self.config.spotify_client_id and self.config.spotify_client_secret:
             self.spotify = SpotifyClient(
-                self.config.spotify_client_id,
-                self.config.spotify_client_secret
+                self.config.spotify_client_id, self.config.spotify_client_secret
             )
+        self.lyrics = LyricsClient()
         self.command_handler: Optional[CommandHandler] = None
 
     async def init_db(self):
@@ -88,7 +94,9 @@ class FMatrixBot:
         login_response = await self.client.login(self.config.matrix_password)
 
         if isinstance(login_response, LoginResponse):
-            logger.info(f"Logged in successfully. Device ID: {login_response.device_id}")
+            logger.info(
+                f"Logged in successfully. Device ID: {login_response.device_id}"
+            )
             return True
         else:
             logger.error(f"Login failed: {login_response}")
@@ -97,13 +105,15 @@ class FMatrixBot:
     async def join_configured_rooms(self):
         """Join pre-configured rooms."""
         if not self.config.auto_join_rooms:
-            logger.warning("No rooms configured in AUTO_JOIN_ROOMS. Skipping auto-join.")
+            logger.warning(
+                "No rooms configured in AUTO_JOIN_ROOMS. Skipping auto-join."
+            )
             return
 
         for room in self.config.auto_join_rooms:
             try:
                 response = await self.client.join(room)
-                if hasattr(response, 'room_id'):
+                if hasattr(response, "room_id"):
                     logger.info(f"Successfully joined room: {room}")
                 else:
                     logger.error(f"Failed to join room {room}: {response}")
@@ -115,7 +125,7 @@ class FMatrixBot:
         for room_id in list(self.client.invited_rooms):
             try:
                 response = await self.client.join(room_id)
-                if hasattr(response, 'room_id'):
+                if hasattr(response, "room_id"):
                     logger.info(f"Auto-accepted invite to room: {room_id}")
                 else:
                     logger.error(f"Failed to accept invite to {room_id}: {response}")
@@ -128,7 +138,7 @@ class FMatrixBot:
         logger.info(f"Received invite to room: {room_id}")
         try:
             response = await self.client.join(room_id)
-            if hasattr(response, 'room_id'):
+            if hasattr(response, "room_id"):
                 logger.info(f"Successfully joined room after invite: {room_id}")
             else:
                 logger.error(f"Failed to join invited room {room_id}: {response}")
@@ -148,10 +158,7 @@ class FMatrixBot:
 
             # Handle command
             await self.command_handler.handle_command(
-                room=room,
-                sender=event.sender,
-                message=event.body,
-                client=self.client
+                room=room, sender=event.sender, message=event.body, client=self.client
             )
 
         except Exception as e:
@@ -170,10 +177,7 @@ class FMatrixBot:
 
             # Handle the reaction
             await self.command_handler.handle_reaction(
-                room=room,
-                event=event,
-                sender=event.sender,
-                client=self.client
+                room=room, event=event, sender=event.sender, client=self.client
             )
 
         except Exception as e:
@@ -184,11 +188,7 @@ class FMatrixBot:
         await self.setup_client()
         await self.check_homeserver()
         self.command_handler = CommandHandler(
-            self.db,
-            self.lastfm,
-            self.discogs,
-            self.spotify,
-            self.config
+            self.db, self.lastfm, self.discogs, self.spotify, self.lyrics, self.config
         )
 
         logged_in = await self.login()
@@ -237,22 +237,13 @@ class FMatrixBot:
         initial_sync = await self.client.sync(timeout=30000)
 
         # NOW set up event handlers after we have the sync token
-        self.client.add_event_callback(
-            self.message_callback,
-            RoomMessage
-        )
+        self.client.add_event_callback(self.message_callback, RoomMessage)
 
         # Add callback for room invites to auto-join
-        self.client.add_event_callback(
-            self.invite_callback,
-            InviteEvent
-        )
+        self.client.add_event_callback(self.invite_callback, InviteEvent)
 
         # Add callback for reactions (pagination)
-        self.client.add_event_callback(
-            self.reaction_callback,
-            ReactionEvent
-        )
+        self.client.add_event_callback(self.reaction_callback, ReactionEvent)
 
         logger.info("Bot ready - processing new messages only")
         while True:

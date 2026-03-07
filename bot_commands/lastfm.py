@@ -30,6 +30,13 @@ class LastfmCommandsMixin:
                 f"`{self.config.command_prefix}fm spotify` - Get Spotify link from within the fm command"
             )
 
+        lyrics_info = (
+            f"\n\n**Lyrics Commands:**\n"
+            f"`{self.config.command_prefix}lyrics` (ly) - Show lyrics for your now playing track\n"
+            f"`{self.config.command_prefix}lyrics <artist> - <track>` (ly) - Show lyrics for a specific track\n"
+            f"`{self.config.command_prefix}fm lyrics` - Show lyrics from within the fm command"
+        )
+
         help_text = f"""
 FMatrix Bot - Last.fm Stats & Leaderboards
 
@@ -76,7 +83,7 @@ Done! ✅
 `{self.config.command_prefix}fm loved` - Show your loved tracks
 `{self.config.command_prefix}fm love Black Sabbath - Iron Man` - Love Iron Man
 
-**GitHub:** [Source Code](https://github.com/zerw0/fmatrix){discogs_info}{spotify_info}
+**GitHub:** [Source Code](https://github.com/zerw0/fmatrix){discogs_info}{spotify_info}{lyrics_info}
         """
         await self.send_message(room, help_text, client)
 
@@ -630,6 +637,99 @@ The token expires in 10 minutes.
         if spotify_track.get("album"):
             message += f"on {spotify_track['album']}\n"
         message += f"\n🔗 [Open on Spotify]({spotify_track['url']})"
+
+        await self.send_message(room, message, client)
+
+    async def show_lyrics(
+        self, room: MatrixRoom, sender: str, args: list, client: AsyncClient
+    ):
+        """Show lyrics for a track.
+
+        If no args: Get current track from Last.fm and fetch lyrics
+        If args provided: Search for the provided song's lyrics
+        """
+        track_name = None
+        artist_name = None
+
+        if not args:
+            # Get current track from Last.fm
+            target_user = await self._get_target_user(room, sender, client)
+            if not target_user:
+                return
+
+            track = await self.lastfm.get_now_playing(target_user)
+            if not track:
+                await self.send_message(
+                    room,
+                    f"❌ Could not fetch now playing track for {target_user}",
+                    client,
+                )
+                return
+
+            track_name = track.get("name", "Unknown")
+            artist_name = self._extract_artist_name(track.get("artist", {}))
+        else:
+            # Parse the provided args as "artist - track" or just a query
+            args_str = " ".join(args)
+            if " - " in args_str:
+                parts = args_str.split(" - ", 1)
+                artist_name = parts[0].strip()
+                track_name = parts[1].strip()
+            else:
+                # Try to search Last.fm first to resolve artist/track
+                candidates = await self.lastfm.search_track(args_str, limit=5)
+                best = self._select_best_lastfm_result(candidates, args_str, "track")
+                if best:
+                    track_name = best.get("name", args_str)
+                    artist_name = self._extract_artist_name(best.get("artist", {}))
+                else:
+                    # Fall back to using the raw query as track name
+                    track_name = args_str
+
+        if not track_name:
+            await self.send_message(room, "❌ Could not determine track name.", client)
+            return
+
+        # Fetch lyrics
+        result = await self.lyrics.get_lyrics(
+            artist=artist_name or "",
+            track=track_name,
+        )
+
+        if not result or not result.get("plain"):
+            query_display = (
+                f"**{track_name}** by *{artist_name}*"
+                if artist_name
+                else f"**{track_name}**"
+            )
+            await self.send_message(
+                room,
+                f"❌ No lyrics found for {query_display}",
+                client,
+            )
+            return
+
+        # Format the lyrics message
+        lyrics_artist = result.get("artist") or artist_name or "Unknown"
+        lyrics_track = result.get("track") or track_name or "Unknown"
+        lyrics_album = result.get("album", "")
+        plain_lyrics = result["plain"]
+
+        # Truncate if too long for a single message (Matrix has limits)
+        max_len = 4000
+        truncated = False
+        if len(plain_lyrics) > max_len:
+            plain_lyrics = plain_lyrics[:max_len].rsplit("\n", 1)[0]
+            truncated = True
+
+        message = f"📝 **Lyrics: {lyrics_track}**\n"
+        message += f"by *{lyrics_artist}*\n"
+        if lyrics_album:
+            message += f"on {lyrics_album}\n"
+        message += f"\n{plain_lyrics}"
+        if truncated:
+            message += "\n\n*(lyrics truncated — too long for a single message)*"
+        message += "\n\n*Powered by [lrclib.net](https://lrclib.net)*"
 
         await self.send_message(room, message, client)
 
