@@ -10,6 +10,11 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILDKIT: ${{ vars.DOCKER_BUILDKIT }}
+      DOCKER_HOST: ${{ vars.DOCKER_HOST }}
+      IMAGE_NAME: ${{ vars.IMAGE_NAME }}
+      REGISTRY: ${{ vars.REGISTRY }}
 
     steps:
       - name: Verify external Docker daemon
