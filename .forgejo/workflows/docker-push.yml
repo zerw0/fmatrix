@@ -7,16 +7,6 @@ on:
   pull_request:
     branches: [main, master]
 
-env:
-  REGISTRY: git.zerw.xyz
-  IMAGE_NAME: ${{ github.repository }}
-
-  # External DinD endpoint (NOT a workflow service)
-  # Replace EXTERNAL_DIND_HOST with your real hostname or IP.
-  DOCKER_HOST: tcp://172.18.0.4:2375
-  DOCKER_TLS_CERTDIR: ""
-  DOCKER_BUILDKIT: "1"
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
