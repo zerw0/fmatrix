@@ -13,7 +13,7 @@ env:
 
   # External DinD endpoint (NOT a workflow service)
   # Replace EXTERNAL_DIND_HOST with your real hostname or IP.
-  DOCKER_HOST: tcp://EXTERNAL_DIND_HOST:2375
+  DOCKER_HOST: tcp://172.18.0.4:2375
   DOCKER_TLS_CERTDIR: ""
   DOCKER_BUILDKIT: "1"
 
