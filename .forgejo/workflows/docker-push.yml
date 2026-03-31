@@ -11,13 +11,26 @@ env:
   REGISTRY: git.zerw.xyz
   IMAGE_NAME: ${{ github.repository }}
 
-  # Critical for your "runner + external dind container" setup:
+  # DinD endpoint (service name must match below)
   DOCKER_HOST: tcp://docker-in-docker:2375
+  DOCKER_TLS_CERTDIR: ""
   DOCKER_BUILDKIT: "1"
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+
+    services:
+      docker-in-docker:
+        image: docker:24-dind
+        privileged: true
+        env:
+          DOCKER_TLS_CERTDIR: ""
+        options: >-
+          --health-cmd "docker info"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
 
     steps:
       - name: Docker info (verify daemon)
@@ -62,6 +75,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # On Forgejo, gha cache often fails; if it does, switch to registry cache.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+
+          # Forgejo-friendly cache stored in your registry:
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
