@@ -11,8 +11,9 @@ env:
   REGISTRY: git.zerw.xyz
   IMAGE_NAME: ${{ github.repository }}
 
-  # DinD endpoint (service name must match below)
-  DOCKER_HOST: tcp://docker-in-docker:2375
+  # External DinD endpoint (NOT a workflow service)
+  # Replace EXTERNAL_DIND_HOST with your real hostname or IP.
+  DOCKER_HOST: tcp://EXTERNAL_DIND_HOST:2375
   DOCKER_TLS_CERTDIR: ""
   DOCKER_BUILDKIT: "1"
 
@@ -20,21 +21,20 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
-    services:
-      docker-in-docker:
-        image: docker:24-dind
-        privileged: true
-        env:
-          DOCKER_TLS_CERTDIR: ""
-        options: >-
-          --health-cmd "docker info"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
-
     steps:
-      - name: Docker info (verify daemon)
-        run: docker info
+      - name: Verify external Docker daemon
+        run: |
+          i=0
+          until docker info >/dev/null 2>&1; do
+            i=$((i+1))
+            if [ "$i" -ge 30 ]; then
+              echo "External Docker daemon not reachable at ${DOCKER_HOST}"
+              exit 1
+            fi
+            echo "Waiting for external daemon at ${DOCKER_HOST}..."
+            sleep 2
+          done
+          docker info
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,6 +44,8 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
 
       - name: Log in to container registry
         if: ${{ github.event_name != 'pull_request' }}
@@ -75,7 +77,5 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-          # Forgejo-friendly cache stored in your registry:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
