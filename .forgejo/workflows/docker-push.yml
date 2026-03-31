@@ -12,8 +12,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
   # Critical for your "runner + external dind container" setup:
-  DOCKER_HOST: tcp://forgejo-dind:2375
-  DOCKER_TLS_CERTDIR: ""
+  DOCKER_HOST: tcp://docker-in-docker:2375
   DOCKER_BUILDKIT: "1"
 
 jobs:
