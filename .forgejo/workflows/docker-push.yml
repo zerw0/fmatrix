@@ -11,11 +11,19 @@ env:
   REGISTRY: git.zerw.xyz
   IMAGE_NAME: ${{ github.repository }}
 
+  # Critical for your "runner + external dind container" setup:
+  DOCKER_HOST: tcp://dind:2375
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_BUILDKIT: "1"
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Docker info (verify daemon)
+        run: docker info
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -47,7 +55,7 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build (and push on non-PR)
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -55,8 +63,6 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-          # NOTE: "type=gha" cache often doesn't work on Forgejo.
-          # If it fails, switch to registry cache (see below).
+          # On Forgejo, gha cache often fails; if it does, switch to registry cache.
           cache-from: type=gha
           cache-to: type=gha,mode=max
