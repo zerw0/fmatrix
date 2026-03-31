@@ -2,7 +2,7 @@
 
 A Matrix bot that shows your Last.fm stats and Discogs collection directly in your rooms. Check your top artists, see what you've been listening to, browse your vinyl collection, and compete with friends on leaderboards.
 
-## Quick Start
+## Requirents
 
 Here's what you need:
 
