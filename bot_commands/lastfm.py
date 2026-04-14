@@ -2091,8 +2091,11 @@ The token expires in 10 minutes.
         text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
         # Italic
         text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
-        # Code
-        text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+        # Code - escape HTML entities inside code blocks so <username> etc. render
+        def _code_replace(m):
+            inner = m.group(1).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            return f"<code>{inner}</code>"
+        text = re.sub(r"`(.+?)`", _code_replace, text)
         # Newlines
         text = text.replace("\n", "<br/>")
         return text

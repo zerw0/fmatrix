@@ -116,11 +116,24 @@ class Database:
     async def link_user(self, matrix_user_id: str, lastfm_username: str) -> bool:
         """Link a Matrix user to a Last.fm account."""
         try:
+            # First, clear any existing mapping for this Last.fm username
+            # from OTHER Matrix users (enforce one-to-one mapping)
             await self.db.execute(
                 """
-                INSERT OR REPLACE INTO user_mappings
+                DELETE FROM user_mappings
+                WHERE lastfm_username = ? AND matrix_user_id != ?
+                """,
+                (lastfm_username, matrix_user_id)
+            )
+            # Use ON CONFLICT to preserve session_key when re-linking
+            await self.db.execute(
+                """
+                INSERT INTO user_mappings
                 (matrix_user_id, lastfm_username, updated_at)
                 VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(matrix_user_id) DO UPDATE SET
+                    lastfm_username = excluded.lastfm_username,
+                    updated_at = CURRENT_TIMESTAMP
                 """,
                 (matrix_user_id, lastfm_username)
             )
