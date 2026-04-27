@@ -124,7 +124,7 @@ Done! ✅
 
         await self.send_message(
             room,
-            f"✅ Linked {sender} to Last.fm user **{lastfm_username}**\n\n� Sending authorization link via DM...",
+            f"✅ Linked {sender} to Last.fm user **{lastfm_username}**\n\nSending authorization link via DM...",
             client,
         )
 

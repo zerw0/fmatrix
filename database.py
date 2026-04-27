@@ -116,16 +116,21 @@ class Database:
     async def link_user(self, matrix_user_id: str, lastfm_username: str) -> bool:
         """Link a Matrix user to a Last.fm account."""
         try:
-            # First, clear any existing mapping for this Last.fm username
-            # from OTHER Matrix users (enforce one-to-one mapping)
-            await self.db.execute(
-                """
-                DELETE FROM user_mappings
-                WHERE lastfm_username = ? AND matrix_user_id != ?
-                """,
+            # Enforce one-to-one: displace any other matrix user already linked to this lastfm account.
+            cursor = await self.db.execute(
+                "SELECT matrix_user_id FROM user_mappings WHERE lastfm_username = ? AND matrix_user_id != ?",
                 (lastfm_username, matrix_user_id)
             )
-            # Use ON CONFLICT to preserve session_key when re-linking
+            displaced = await cursor.fetchone()
+            if displaced:
+                logger.warning(
+                    "Displacing existing link: matrix_user=%s was linked to lastfm=%s",
+                    displaced[0], lastfm_username
+                )
+                await self.db.execute(
+                    "DELETE FROM user_mappings WHERE matrix_user_id = ?",
+                    (displaced[0],)
+                )
             await self.db.execute(
                 """
                 INSERT INTO user_mappings
@@ -141,6 +146,7 @@ class Database:
             return True
         except Exception as e:
             logger.error(f"Error linking user: {e}")
+            await self.db.rollback()
             return False
 
     async def get_lastfm_username(self, matrix_user_id: str) -> str:
@@ -272,7 +278,7 @@ class Database:
             """,
             (lastfm_username, item_type, item_name.lower(),
              artist_name.lower() if artist_name else None,
-             artist_name)
+             artist_name.lower() if artist_name else None)
         )
         row = await cursor.fetchone()
 
@@ -353,8 +359,9 @@ class Database:
         """Run SQLite maintenance to reduce bloat and improve query planning."""
         await self.db.execute("PRAGMA optimize")
         await self.db.execute("ANALYZE")
-        await self.db.execute("VACUUM")
         await self.db.commit()
+        # VACUUM cannot run inside a transaction; commit first then execute outside one.
+        await self.db.execute("VACUUM")
 
     # Discogs-related methods
     async def link_discogs_user(self, matrix_user_id: str, discogs_username: str) -> bool:

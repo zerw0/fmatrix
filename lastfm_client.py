@@ -266,15 +266,12 @@ class LastfmClient:
         return None
 
     async def get_now_playing(self, username: str) -> Optional[Dict]:
-        """Get user's currently playing track."""
+        """Get user's currently playing track, or None if nothing is scrobbling right now."""
         tracks = await self.get_recent_tracks(username, limit=1)
-        if tracks and len(tracks) > 0:
+        if tracks:
             track = tracks[0]
-            # Check if track is currently playing (has @attr with nowplaying key)
-            if isinstance(track.get('artist'), dict):
-                return track
-            elif isinstance(track.get('artist'), str):
-                # Single track result
+            attr = track.get('@attr', {})
+            if attr.get('nowplaying') == 'true':
                 return track
         return None
 
@@ -331,7 +328,7 @@ class LastfmClient:
             'format': 'json'
         }
 
-        logger.info(f"Params being sent (minus api_sig): method={params['method']}, artist={params['artist']}, track={params['track']}, sk={params['sk'][:10]}..., api_key={params['api_key'][:5]}..., format={params['format']}")
+        logger.info(f"Sending love_track: method={params['method']}, artist={params['artist']}, track={params['track']}")
 
         session = await self.get_session()
         try:

@@ -183,6 +183,17 @@ class FMatrixBot:
         except Exception as e:
             logger.error(f"Error handling reaction: {e}", exc_info=True)
 
+    async def close(self):
+        """Close all HTTP sessions and the database."""
+        await self.lastfm.close()
+        if self.discogs:
+            await self.discogs.close()
+        await self.lyrics.close()
+        if self.db:
+            await self.db.close()
+        if self.client:
+            await self.client.close()
+
     async def run(self):
         """Run the bot."""
         await self.setup_client()
@@ -194,6 +205,7 @@ class FMatrixBot:
         logged_in = await self.login()
         if not logged_in:
             logger.error("Matrix login failed; exiting.")
+            await self.close()
             return False
 
         # Join configured rooms
@@ -207,7 +219,10 @@ class FMatrixBot:
 
         logger.info("Starting sync loop...")
         # Use custom sync loop to handle invites
-        await self.sync_with_invite_handling()
+        try:
+            await self.sync_with_invite_handling()
+        finally:
+            await self.close()
         return True
 
     async def cache_cleanup_loop(self):

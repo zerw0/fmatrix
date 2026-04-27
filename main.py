@@ -6,7 +6,7 @@ FMatrix - Matrix Bot for Last.fm Stats and Leaderboards
 import argparse
 import asyncio
 import logging
-import os
+import logging.handlers
 import sys
 import time
 from pathlib import Path
@@ -18,7 +18,9 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('fmatrix.log'),
+        logging.handlers.RotatingFileHandler(
+            'fmatrix.log', maxBytes=10 * 1024 * 1024, backupCount=3
+        ),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -80,7 +82,7 @@ async def main(config_path=None):
                 pass
             except Exception as e:
                 logger.warning("Health check task shutdown failed: %s", e)
-            os._exit(1)
+            sys.exit(1)
     except KeyboardInterrupt:
         logger.info("Bot interrupted by user")
     except Exception as e:
