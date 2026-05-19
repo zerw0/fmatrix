@@ -40,4 +40,7 @@ fmatrix = "main:run"
 
 [tool.setuptools]
 py-modules = ["main", "bot", "config", "database", "lastfm_client", "discogs_client", "spotify_client", "lyrics_client"]
-packages = [{find = {where = ["."], include = ["bot_commands", "bot_commands.*"]}}]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bot_commands", "bot_commands.*"]
