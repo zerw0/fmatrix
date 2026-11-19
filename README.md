@@ -10,6 +10,9 @@ Here's what you need:
    - Go to https://www.last.fm/api/account/create
    - Make an app and copy your API Key and Secret
 
+> [!CAUTION]
+> Starting December 1, 2026, the account that owns FMatrix's Last.fm API key must have an active Last.fm Pro subscription. This applies to both new and existing keys. Existing keys will stop working until their owners subscribe. See the [Last.fm announcement](https://support.last.fm/t/api-keys-will-require-pro-from-1st-december/121030).
+
 **2. Discogs User Token (Optional)**
    - Go to https://www.discogs.com/settings/developers
    - Generate a new token for personal use
